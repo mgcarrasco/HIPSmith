@@ -20,6 +20,12 @@ class HIPOptions {
   //                            of __shared__ memory inside variable initializers
   //                            (AMDGPU rejects addrspacecast in static
   //                            initializers). On by default.
+  // hip_managed_safe_static_init
+  //                          - when hip_managed is on, forbid taking the address
+  //                            of __managed__ memory inside variable
+  //                            initializers (clang's HIP device codegen crashes
+  //                            on this: UNREACHABLE in CGCUDANV.cpp). On by
+  //                            default.
 
 #define DEFINE_HIPFLAG(name, type) \
  private:                          \
@@ -38,6 +44,7 @@ class HIPOptions {
   DEFINE_HIPFLAG(hip_shared, bool)
   DEFINE_HIPFLAG(hip_shared_safe_static_init, bool)
   DEFINE_HIPFLAG(hip_managed, bool)
+  DEFINE_HIPFLAG(hip_managed_safe_static_init, bool)
   DEFINE_HIPFLAG(hip_device, bool)
   DEFINE_HIPFLAG(hip_builtins, bool)
   DEFINE_HIPFLAG(hip_sync, bool)

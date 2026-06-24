@@ -1022,12 +1022,30 @@ Expression* VariableSelector::make_init_value(Effect::Access access,
   const bool guard_shared_init = HIPSmith::HIPOptions::hip_shared() &&
                                  HIPSmith::HIPOptions::hip_shared_safe_static_init();
 
+  // Taking the address of __managed__ memory inside a variable initializer
+  // crashes clang's HIP device codegen (UNREACHABLE in CGCUDANV.cpp). When the
+  // guard is on, exclude any var whose storage is (or descends from) HIP
+  // managed memory so it can never become the address used to initialize this
+  // variable. Only initializers are filtered; the runtime "&managed" pattern
+  // (assignments, function arguments, etc.) is unaffected.
+  const bool guard_managed_init =
+      HIPSmith::HIPOptions::hip_managed() &&
+      HIPSmith::HIPOptions::hip_managed_safe_static_init();
+
   vector<Variable*> vars = find_all_visible_vars(b);
 
   if (guard_shared_init) {
     vars.erase(std::remove_if(vars.begin(), vars.end(),
                               [](const Variable* v) {
                                 return has_hip_shared_ancestor(v);
+                              }),
+               vars.end());
+  }
+
+  if (guard_managed_init) {
+    vars.erase(std::remove_if(vars.begin(), vars.end(),
+                              [](const Variable* v) {
+                                return has_hip_managed_ancestor(v);
                               }),
                vars.end());
   }
@@ -1526,6 +1544,22 @@ bool VariableSelector::has_hip_shared_ancestor(const Variable* v) {
   // itemised array parent check
   if (v->get_collective() && v->get_collective() != v) {
     return has_hip_shared_ancestor(v->get_collective());
+  }
+
+  return false;
+}
+
+// checks whether some ancestor of a variable is __managed__ HIP memory
+bool VariableSelector::has_hip_managed_ancestor(const Variable* v) {
+  if (!v) return false;
+  if (v->is_hip_managed()) return true;
+
+  // struct/union field parent check
+  if (v->field_var_of) return has_hip_managed_ancestor(v->field_var_of);
+
+  // itemised array parent check
+  if (v->get_collective() && v->get_collective() != v) {
+    return has_hip_managed_ancestor(v->get_collective());
   }
 
   return false;

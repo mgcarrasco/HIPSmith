@@ -134,6 +134,7 @@ class VariableSelector {
 
  private:
   static bool has_hip_shared_ancestor(const Variable* v);
+  static bool has_hip_managed_ancestor(const Variable* v);
   static ArrayVariable* create_array_and_itemize(
       Block* blk, string name, const CGContext& cg_context, const Type* t,
       const Expression* init, const CVQualifiers* qfer, bool isHipShared);
