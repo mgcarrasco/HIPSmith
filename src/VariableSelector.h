@@ -183,7 +183,8 @@ class VariableSelector {
   static Variable* GenerateNewParentLocal(Block& block, Effect::Access access,
                                           const CGContext& cg_context,
                                           const Type* type,
-                                          const CVQualifiers* qfer);
+                                          const CVQualifiers* qfer,
+                                          bool force_non_shared = false);
 
   static void get_all_array_vars(vector<const Variable*>& array_vars);
 

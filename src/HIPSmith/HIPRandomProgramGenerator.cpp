@@ -36,6 +36,14 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    // Allow disabling the guard that forbids taking the address of __shared__
+    // memory inside variable initializers. The guard is on by default; this
+    // opt-out lets us fuzz the (currently AMDGPU-rejected) pattern on purpose.
+    if (strcmp(argv[idx], "--no-hip-shared-safe-static-init") == 0) {
+      HIPSmith::HIPOptions::hip_shared_safe_static_init(false);
+      continue;
+    }
+
     if (strcmp(argv[idx], "--hip-managed") == 0) {
       HIPSmith::HIPOptions::hip_managed(true);
       continue;

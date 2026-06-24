@@ -35,6 +35,7 @@
 #pragma warning(disable : 4786) /* Disable annoying warning messages */
 #endif
 
+#include <algorithm>
 #include <cassert>
 #include <map>
 
@@ -1012,7 +1013,24 @@ Expression* VariableSelector::make_init_value(Effect::Access access,
   const Type* type = t->ptr_type;
   assert(type);
 
+  // Taking the address of __shared__ memory inside a variable initializer
+  // produces an addrspacecast in a static initializer, which the AMDGPU backend
+  // rejects ("unsupported expression in static initializer"). When the guard is
+  // on, exclude any var whose storage is (or descends from) HIP shared memory
+  // so it can never become the address used to initialize this variable. The
+  // runtime "&shared" pattern is unaffected; only initializers are filtered.
+  const bool guard_shared_init = HIPSmith::HIPOptions::hip_shared() &&
+                                 HIPSmith::HIPOptions::hip_shared_safe_static_init();
+
   vector<Variable*> vars = find_all_visible_vars(b);
+
+  if (guard_shared_init) {
+    vars.erase(std::remove_if(vars.begin(), vars.end(),
+                              [](const Variable* v) {
+                                return has_hip_shared_ancestor(v);
+                              }),
+               vars.end());
+  }
 
   vector<const Variable*> dummy;
 
@@ -1051,8 +1069,10 @@ Expression* VariableSelector::make_init_value(Effect::Access access,
     // specified
 
     if (CGOptions::addr_taken_of_locals() && use_local) {
-      var =
-          GenerateNewParentLocal(*b, Effect::READ, cg_context, tt, &qfer_deref);
+      // force_non_shared: the address of this new local is about to be baked
+      // into an initializer, so it must not be __shared__ when the guard is on.
+      var = GenerateNewParentLocal(*b, Effect::READ, cg_context, tt, &qfer_deref,
+                                   guard_shared_init);
       ERROR_GUARD(NULL);
       Bookkeeper::record_volatile_access(
           var, var->type->get_indirect_level() - tt->get_indirect_level(),
@@ -1086,7 +1106,8 @@ Variable* VariableSelector::GenerateNewParentLocal(Block& block,
                                                    Effect::Access access,
                                                    const CGContext& cg_context,
                                                    const Type* t,
-                                                   const CVQualifiers* qfer) {
+                                                   const CVQualifiers* qfer,
+                                                   bool force_non_shared) {
   ERROR_GUARD(NULL);
   assert(t);
   // if this is for a struct/union with volatile field(s), create a global
@@ -1112,7 +1133,7 @@ Variable* VariableSelector::GenerateNewParentLocal(Block& block,
   // fixed 20% chance of being shared unless we are being forced to not generate
   // them
   bool isHipShared = false;
-  if (HIPSmith::HIPOptions::hip_shared()) {
+  if (HIPSmith::HIPOptions::hip_shared() && !force_non_shared) {
     isHipShared = pure_rnd_flipcoin(20);
   }
 
