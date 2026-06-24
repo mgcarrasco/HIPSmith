@@ -45,3 +45,42 @@ To start the testing loop:
 
 ```bash
 python3 hip_test.py
+```
+
+### HIPSmith Command-Line Options
+
+HIPSmith accepts the following HIP-specific flags:
+
+| Flag | Description |
+|---|---|
+| `--seed <N>` | Fix the random seed for reproducible output |
+| `--small` | Restrict output size (max 3 functions, shallower blocks/expressions/arrays) |
+| `--vectors` | Enable HIP vector types |
+| `--hip-consts` | Generate global read-only `__constant__` variables |
+| `--hip-shared` | Generate `__shared__` local memory variables |
+| `--hip-managed` | Generate `__managed__` variables |
+| `--hip-device` | Generate `__device__` variables |
+| `--hip-builtins` | Use HIP built-in functions (e.g. `threadIdx`, `blockIdx`) |
+| `--hip-sync` | Emit barrier synchronization (`__syncthreads()`, `__threadfence()`, etc.) |
+| `--hip-warp` | Enable warp-level operations |
+| `--hip-warp-match` | Enable warp match operations (`__match_any_sync`, etc.) |
+| `--hip-warp-shuffle` | Enable warp shuffle operations (`__shfl_*`) |
+| `--hip-warp-reduce` | Enable warp reduction operations |
+
+#### Grid and block size behaviour
+
+By default, the generated driver launches the kernel with `num_threads = 4` and `block_size = 4`.
+
+Several flags cause the driver to derive these values from `argc` instead, so that the binary can be run with no extra arguments (`argc = 1`) to enforce single-thread / single-block execution and avoid data races or undefined thread-dependent behaviour:
+
+| Flag | `num_threads = argc` | `block_size = argc` |
+|---|---|---|
+| `--hip-shared` | | yes |
+| `--hip-managed` | yes | yes |
+| `--hip-device` | yes | yes |
+| `--hip-builtins` | yes | yes |
+| `--hip-sync` | yes | yes |
+| `--hip-warp` | yes | yes |
+| `--hip-warp-match` | yes | yes |
+| `--hip-warp-shuffle` | yes | yes |
+| `--hip-warp-reduce` | yes | yes |
