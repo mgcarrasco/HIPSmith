@@ -44,7 +44,7 @@ The primary way to use HIPSmith for differential testing is via the provided Pyt
 To start the testing loop:
 
 ```bash
-python3 hip_test.py
+python3 test_hipsmith.py
 ```
 
 ### HIPSmith Command-Line Options
