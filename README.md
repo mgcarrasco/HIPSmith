@@ -58,7 +58,9 @@ HIPSmith accepts the following HIP-specific flags:
 | `--vectors` | Enable HIP vector types |
 | `--hip-consts` | Generate global read-only `__constant__` variables |
 | `--hip-shared` | Generate `__shared__` local memory variables |
+| `--no-hip-shared-safe-static-init` | Disable the restrictions that avoid unsupported `__shared__` features under `--hip-shared` |
 | `--hip-managed` | Generate `__managed__` variables |
+| `--no-hip-managed-safe-static-init` | Disable the restrictions that avoid unsupported `__managed__` features under `--hip-managed` |
 | `--hip-device` | Generate `__device__` variables |
 | `--hip-builtins` | Use HIP built-in functions (e.g. `threadIdx`, `blockIdx`) |
 | `--hip-sync` | Emit barrier synchronization (`__syncthreads()`, `__threadfence()`, etc.) |
