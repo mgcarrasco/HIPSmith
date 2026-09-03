@@ -268,23 +268,6 @@ void OutputPrintSameLineStatementList(const std::vector<Statement *> &stms,
       i = j;
       continue;
     }
-    if (is_same_line_host(stms[i])) {
-      std::vector<const Statement *> group;
-      group.push_back(stms[i]);
-      size_t j = i + 1;
-      while (j < stms.size() && is_print_stmt(stms[j])) {
-        group.push_back(stms[j]);
-        ++j;
-      }
-      if (group.size() > 1) {
-        std::vector<std::string> pieces;
-        if (can_glue(group, fm, &pieces)) {
-          emit_glued_group(group, pieces, out, fm, indent);
-          i = j;
-          continue;
-        }
-      }
-    }
     emit_statement_normally(stms[i], out, fm, indent);
     ++i;
   }

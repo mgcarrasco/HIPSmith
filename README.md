@@ -64,7 +64,7 @@ HIPSmith accepts the following HIP-specific flags:
 | `--hip-device` | Generate `__device__` variables |
 | `--hip-builtins` | Use HIP built-in functions (e.g. `threadIdx`, `blockIdx`) |
 | `--hip-print` | Randomly emit `PRINT_<TYPE>(lvalue, __LINE__, how, id);` statements |
-| `--hip-print-same-line` | Like `--hip-print`, but place each `PRINT_*` on a neighboring source line. Omit a print that has no such neighbor. Implies `--hip-print`. |
+| `--hip-print-same-line` | Like `--hip-print`, but emit each `PRINT_*` first on the same line as the following statement. Omit a print that has no such neighbor. Implies `--hip-print`. |
 | `--hip-sync` | Emit barrier synchronization (`__syncthreads()`, `__threadfence()`, etc.) |
 | `--hip-warp` | Enable warp-level operations |
 | `--hip-warp-match` | Enable warp match operations (`__match_any_sync`, etc.) |

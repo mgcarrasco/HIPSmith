@@ -47,9 +47,10 @@ class HIPStatement : public Statement {
 Statement* make_random_st(CGContext& cg_context);
 Statement* make_random_print(CGContext& cg_context);
 
-// When --hip-print-same-line is set, emit PRINT_* on the same source line as a
-// neighboring assign, call, or HIP fence. Omit a PRINT that cannot share a
-// line with such a host (including a print next to return/if/for/block).
+// When --hip-print-same-line is set, emit PRINT_* first on the same source
+// line as the following assign, call, or HIP fence. Never fold a PRINT onto
+// the previous statement's line. Omit a PRINT that has no following host
+// (including a print next to return/if/for/block).
 void OutputPrintSameLineStatementList(const std::vector<Statement*>& stms,
                                       std::ostream& out, FactMgr* fm,
                                       int indent);
