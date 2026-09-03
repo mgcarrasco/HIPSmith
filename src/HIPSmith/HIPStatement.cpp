@@ -46,7 +46,7 @@ void collect_printable(const Variable *v, std::vector<const Variable *> &out) {
     return;
   }
   if (v->type && print_macro(v->type->simple_type) && !v->isArray &&
-      !v->is_volatile() && !v->is_inside_union_field() &&
+      !v->isBitfield_ && !v->is_volatile() && !v->is_inside_union_field() &&
       !v->is_hip_builtin()) {
     out.push_back(v);
   }

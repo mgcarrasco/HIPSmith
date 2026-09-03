@@ -34,13 +34,14 @@ DEVICE_FORCE_INLINE void transparent_crc_no_string(uint64_t *crc64_context,
 #else
 #ifdef __HIP_DEVICE_COMPILE__
 #define HIPSMITH_PRINT(v, lineno, how, id, fmt, val)                           \
-  printf("[line %d] tid(%u,%u,%u) %s = " fmt " how='%s' id=%d\n",              \
+  printf("[line %d] tid(%u,%u,%u) %s = " fmt " how='%s' id=%d sizeof=%u\n",     \
          (int)(lineno), (unsigned)threadIdx.x, (unsigned)threadIdx.y,          \
-         (unsigned)threadIdx.z, #v, val, how, (int)(id))
+         (unsigned)threadIdx.z, #v, val, how, (int)(id),                       \
+         (unsigned)sizeof(v))
 #else
 #define HIPSMITH_PRINT(v, lineno, how, id, fmt, val)                           \
-  printf("[line %d] %s = " fmt " how='%s' id=%d\n", (int)(lineno), #v, val,    \
-         how, (int)(id))
+  printf("[line %d] %s = " fmt " how='%s' id=%d sizeof=%u\n", (int)(lineno),    \
+         #v, val, how, (int)(id), (unsigned)sizeof(v))
 #endif
 #define PRINT_INT8(v, lineno, how, id)                                         \
   HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
