@@ -39,6 +39,7 @@
 
 #include "CGOptions.h"
 #include "FunctionInvocation.h"
+#include "HIPSmith/HIPOptions.h"
 #include "Probabilities.h"
 #include "ProbabilityTable.h"
 #include "SafeOpFlags.h"
@@ -756,6 +757,8 @@ void Probabilities::set_default_statement_prob() {
     SET_SINGLE_NAME("statement_arrayop_prob", ArrayOp, 0);
   }
   SET_SINGLE_NAME("statement_hipstatement_prob", HIPStatement, 5);
+  SET_SINGLE_NAME("statement_print_prob", Print,
+                  HIPSmith::HIPOptions::hip_print() ? 70 : 0);
   // use the remaining probabilities for assignments
   SET_SINGLE_NAME("statement_assign_prob", Assign, 100);
 

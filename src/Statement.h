@@ -81,11 +81,12 @@ enum eStatementType {
   eBreak,
   eGoto,
   eHIPStatement,
-  eArrayOp
+  eArrayOp,
+  ePrint
   //  ..more?  try, catch, throw
   //	eHash,
 };
-#define MAX_STATEMENT_TYPE ((eStatementType)(eArrayOp + 1))
+#define MAX_STATEMENT_TYPE ((eStatementType)(ePrint + 1))
 
 /*
  *

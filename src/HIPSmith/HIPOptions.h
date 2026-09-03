@@ -26,6 +26,10 @@ class HIPOptions {
   //                            initializers (clang's HIP device codegen crashes
   //                            on this: UNREACHABLE in CGCUDANV.cpp). On by
   //                            default.
+  // hip_print                - emit reads through externally defined PRINT_* macros
+  // hip_print_same_line      - emit each PRINT_* on the same source line as a
+  //                            neighboring simple statement so noop builds still
+  //                            have an is_stmt at that line
 
 #define DEFINE_HIPFLAG(name, type) \
  private:                          \
@@ -47,6 +51,8 @@ class HIPOptions {
   DEFINE_HIPFLAG(hip_managed_safe_static_init, bool)
   DEFINE_HIPFLAG(hip_device, bool)
   DEFINE_HIPFLAG(hip_builtins, bool)
+  DEFINE_HIPFLAG(hip_print, bool)
+  DEFINE_HIPFLAG(hip_print_same_line, bool)
   DEFINE_HIPFLAG(hip_sync, bool)
   DEFINE_HIPFLAG(hip_warp, bool)
   DEFINE_HIPFLAG(hip_warp_match, bool)

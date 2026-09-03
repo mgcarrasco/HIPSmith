@@ -1,10 +1,15 @@
 #ifndef _HIPSMITH_HIPSTATEMENT_H_
 #define _HIPSMITH_HIPSTATEMENT_H_
 
+#include <iosfwd>
+#include <ostream>
+#include <vector>
+
 #include "CommonMacros.h"
 #include "Statement.h"
 
 class CGContext;
+class FactMgr;
 
 namespace HIPSmith {
 
@@ -40,6 +45,14 @@ class HIPStatement : public Statement {
 
 // Hook method called by Csmith's Statement::make_random
 Statement* make_random_st(CGContext& cg_context);
+Statement* make_random_print(CGContext& cg_context);
+
+// When --hip-print-same-line is set, emit PRINT_* on the same source line as a
+// neighboring assign, call, or HIP fence. Omit a PRINT that cannot share a
+// line with such a host (including a print next to return/if/for/block).
+void OutputPrintSameLineStatementList(const std::vector<Statement*>& stms,
+                                      std::ostream& out, FactMgr* fm,
+                                      int indent);
 
 }  // namespace HIPSmith
 

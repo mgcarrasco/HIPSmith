@@ -63,11 +63,22 @@ HIPSmith accepts the following HIP-specific flags:
 | `--no-hip-managed-safe-static-init` | Disable the restrictions that avoid unsupported `__managed__` features under `--hip-managed` |
 | `--hip-device` | Generate `__device__` variables |
 | `--hip-builtins` | Use HIP built-in functions (e.g. `threadIdx`, `blockIdx`) |
+| `--hip-print` | Randomly emit `PRINT_<TYPE>(lvalue, __LINE__, how, id);` statements |
+| `--hip-print-same-line` | Like `--hip-print`, but place each `PRINT_*` on a neighboring source line. Omit a print that has no such neighbor. Implies `--hip-print`. |
 | `--hip-sync` | Emit barrier synchronization (`__syncthreads()`, `__threadfence()`, etc.) |
 | `--hip-warp` | Enable warp-level operations |
 | `--hip-warp-match` | Enable warp match operations (`__match_any_sync`, etc.) |
 | `--hip-warp-shuffle` | Enable warp shuffle operations (`__shfl_*`) |
 | `--hip-warp-reduce` | Enable warp reduction operations |
+
+#### Scalar print statements
+
+`--hip-print` emits `PRINT_<TYPE>(lvalue, __LINE__, how, id);` (~10% of
+statements). `how` is a ROCgdb `print` expression; `id` is a stable
+generation-order integer.
+
+Default expansion is `printf`; `-DHIPSMITH_PRINT_NOOP` makes it `((void)0)`
+without regenerating.
 
 #### Grid and block size behaviour
 

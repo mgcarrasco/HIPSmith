@@ -56,6 +56,8 @@
 #include "FactMgr.h"
 #include "Function.h"
 #include "FunctionInvocationUser.h"
+#include "HIPSmith/HIPOptions.h"
+#include "HIPSmith/HIPStatement.h"
 #include "Statement.h"
 #include "StatementGoto.h"
 #include "Variable.h"
@@ -255,6 +257,10 @@ void Block::OutputTmpVariableList(std::ostream& out, int indent) const {
  */
 static void OutputStatementList(const vector<Statement*>& stms,
                                 std::ostream& out, FactMgr* fm, int indent) {
+  if (HIPSmith::HIPOptions::hip_print_same_line()) {
+    HIPSmith::OutputPrintSameLineStatementList(stms, out, fm, indent);
+    return;
+  }
   size_t i;
   for (i = 0; i < stms.size(); i++) {
     const Statement* stm = stms[i];

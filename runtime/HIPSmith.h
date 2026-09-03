@@ -22,6 +22,44 @@ DEVICE_FORCE_INLINE void transparent_crc_no_string(uint64_t *crc64_context,
 
 #define transparent_crc_(A, B, C, D) transparent_crc_no_string(A, B)
 
+#ifdef HIPSMITH_PRINT_NOOP
+#define PRINT_INT8(v, lineno, how, id) ((void)0)
+#define PRINT_UINT8(v, lineno, how, id) ((void)0)
+#define PRINT_INT16(v, lineno, how, id) ((void)0)
+#define PRINT_UINT16(v, lineno, how, id) ((void)0)
+#define PRINT_INT(v, lineno, how, id) ((void)0)
+#define PRINT_UINT(v, lineno, how, id) ((void)0)
+#define PRINT_INT64(v, lineno, how, id) ((void)0)
+#define PRINT_UINT64(v, lineno, how, id) ((void)0)
+#else
+#ifdef __HIP_DEVICE_COMPILE__
+#define HIPSMITH_PRINT(v, lineno, how, id, fmt, val)                           \
+  printf("[line %d] tid(%u,%u,%u) %s = " fmt " how='%s' id=%d\n",              \
+         (int)(lineno), (unsigned)threadIdx.x, (unsigned)threadIdx.y,          \
+         (unsigned)threadIdx.z, #v, val, how, (int)(id))
+#else
+#define HIPSMITH_PRINT(v, lineno, how, id, fmt, val)                           \
+  printf("[line %d] %s = " fmt " how='%s' id=%d\n", (int)(lineno), #v, val,    \
+         how, (int)(id))
+#endif
+#define PRINT_INT8(v, lineno, how, id)                                         \
+  HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
+#define PRINT_UINT8(v, lineno, how, id)                                        \
+  HIPSMITH_PRINT(v, lineno, how, id, "%u", (unsigned)(v))
+#define PRINT_INT16(v, lineno, how, id)                                        \
+  HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
+#define PRINT_UINT16(v, lineno, how, id)                                       \
+  HIPSMITH_PRINT(v, lineno, how, id, "%u", (unsigned)(v))
+#define PRINT_INT(v, lineno, how, id)                                          \
+  HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
+#define PRINT_UINT(v, lineno, how, id)                                         \
+  HIPSMITH_PRINT(v, lineno, how, id, "%u", (unsigned)(v))
+#define PRINT_INT64(v, lineno, how, id)                                        \
+  HIPSMITH_PRINT(v, lineno, how, id, "%lld", (long long)(v))
+#define PRINT_UINT64(v, lineno, how, id)                                       \
+  HIPSMITH_PRINT(v, lineno, how, id, "%llu", (unsigned long long)(v))
+#endif
+
 typedef unsigned char uchar;
 typedef unsigned short ushort;
 typedef unsigned int uint;

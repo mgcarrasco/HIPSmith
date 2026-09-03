@@ -81,6 +81,7 @@ enum ProbName {
   pGotoProb,
   pArrayOpProb,
   pHIPStatementProb,
+  pPrintProb,
 
   // group for assignment ops
   pAssignOpsProb,

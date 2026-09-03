@@ -92,6 +92,7 @@ AttributeGenerator Statement::label_attr_generator;
 
 namespace HIPSmith {
 Statement* make_random_st(CGContext& cg_context);
+Statement* make_random_print(CGContext& cg_context);
 }  // namespace HIPSmith
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -309,6 +310,9 @@ Statement* Statement::make_random(CGContext& cg_context, eStatementType t) {
       break;
     case eHIPStatement:
       s = HIPSmith::make_random_st(cg_context);
+      break;
+    case ePrint:
+      s = HIPSmith::make_random_print(cg_context);
       break;
   }
 

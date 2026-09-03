@@ -67,6 +67,17 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    if (strcmp(argv[idx], "--hip-print") == 0) {
+      HIPSmith::HIPOptions::hip_print(true);
+      continue;
+    }
+
+    if (strcmp(argv[idx], "--hip-print-same-line") == 0) {
+      HIPSmith::HIPOptions::hip_print(true);
+      HIPSmith::HIPOptions::hip_print_same_line(true);
+      continue;
+    }
+
     if (strcmp(argv[idx], "--hip-sync") == 0) {
       HIPSmith::HIPOptions::hip_sync(true);
       continue;
