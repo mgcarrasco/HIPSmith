@@ -50,6 +50,12 @@ def parse_args() -> argparse.Namespace:
         help="Define HIPSMITH_PRINT_NOOP (PRINT_* becomes ((void)0))",
     )
     parser.add_argument(
+        "--print-escape",
+        action="store_true",
+        help="Define HIPSMITH_PRINT_ESCAPE (PRINT_* becomes a volatile read "
+        "of the variable, forcing it to keep its storage without printing)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Pass -g",
@@ -89,6 +95,8 @@ def main() -> int:
         cmd.append("-g")
     if args.print_noop:
         cmd.append("-DHIPSMITH_PRINT_NOOP")
+    if args.print_escape:
+        cmd.append("-DHIPSMITH_PRINT_ESCAPE")
     cmd.append("-DHIP_ENABLE_EXTRA_WARP_SYNC_TYPES=1")
     cmd.extend(
         [
