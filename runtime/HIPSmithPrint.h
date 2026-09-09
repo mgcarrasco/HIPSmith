@@ -30,15 +30,6 @@
 #define PRINT_INT64(v, lineno, how, id) ((void)0)
 #define PRINT_UINT64(v, lineno, how, id) ((void)0)
 #elif defined(HIPSMITH_PRINT_ESCAPE)
-// Device-only mode: rather than printing, read the variable through a volatile
-// lvalue and discard the result. Taking the address forces the variable to have
-// a memory home, and a volatile read must be emitted at every -O level, so the
-// storage survives optimisation. The load is the point, not the value.
-// lineno/how/id are unused in this mode.
-//
-// Deliberately a macro and not an inline helper: a helper shows up as
-// DW_TAG_inlined_subroutine in the device DWARF, perturbing the very line
-// tables that --hip-print-same-line exists to control.
 #define HIPSMITH_ESCAPE(v) ((void)*(const volatile decltype(v) *)&(v))
 #define PRINT_INT8(v, lineno, how, id) HIPSMITH_ESCAPE(v)
 #define PRINT_UINT8(v, lineno, how, id) HIPSMITH_ESCAPE(v)

@@ -79,24 +79,14 @@ statements). `how` is a ROCgdb `print` expression;
 for gdb comparison; that size is not a source operand, so a reducer cannot
 rewrite it.
 
-The `PRINT_*` macros are defined in `runtime/HIPSmithPrint.h`, which
-`HIPSmith.h` includes; generated code needs no extra `#include`. The expansion
-is chosen at compile time, so one generated program can be built in any of
-these modes without regenerating:
+The expansion is chosen at compile time, so one generated program can be built
+in any of these modes without regenerating:
 
 | Define | `PRINT_*` expands to |
 |---|---|
 | *(none)* | `printf` of the value, `sizeof`, `how` and `id` |
 | `-DHIPSMITH_PRINT_NOOP` | `((void)0)` |
-| `-DHIPSMITH_PRINT_ESCAPE` | a discarded volatile read of the variable |
-
-`-DHIPSMITH_PRINT_ESCAPE` prints nothing. It reads the variable through a
-volatile lvalue (`(void)*(const volatile decltype(v) *)&(v)`), which forces the
-variable to keep a memory home the debugger can find, without the heavy
-optimisation barrier a `printf` call imposes. Use it to test debug info on code
-optimised much closer to normal; note that it removes the runtime output that
-`crosscheck-run-vs-gdb.py` uses as its oracle. Device-only. Defining it
-together with `HIPSMITH_PRINT_NOOP` is a compile error.
+| `-DHIPSMITH_PRINT_ESCAPE` | a discarded volatile read of the variable (device only, no output) |
 
 #### Grid and block size behaviour
 
