@@ -608,9 +608,14 @@ Variable* VariableSelector::GenerateHIPConstant(const CGContext& cg_context) {
   ERROR_GUARD(NULL);
 
   // even though this will be a const in our eyes we dont want to confuse
-  // csmith internals by using the constant qualifier
+  // csmith internals by using the constant qualifier. HIPOptions disables
+  // CGOptions::consts(), and output_qualified_type() asserts on a const
+  // qualifier when it is off, so asking for one here aborts before the
+  // declaration can even be printed. Variable::is_const() already reports
+  // these as const via is_hip_const(), and HIPOutputMgr emits the
+  // __constant__ address space itself.
   CVQualifiers var_qfer;
-  var_qfer.add_qualifiers(true, false);
+  var_qfer.add_qualifiers(false, false);
 
   // naming convention will be hip_const_***
   string name = gensym("hip_const_");
