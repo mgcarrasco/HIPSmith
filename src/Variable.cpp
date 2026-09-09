@@ -525,7 +525,12 @@ bool Variable::is_hip_builtin(void) const {
 // --------------------------------------------------------------
 bool Variable::is_global(void) const {
   // if we have a g_ we must be a global even in our special global struct
-  if (name.find("g_") == 0 || is_hip_const() || is_hip_device()) {
+  // __managed__ and the HIP builtins are globals too: GenerateHIPManaged and
+  // GenerateHIPBuiltins push them onto GlobalList and then register them with
+  // FactMgr::add_new_var_fact_and_update_inout_maps(NULL, ...), which asserts
+  // is_global() for a null block.
+  if (name.find("g_") == 0 || is_hip_const() || is_hip_device() ||
+      is_hip_managed() || is_hip_builtin()) {
     return true;
   }
 
