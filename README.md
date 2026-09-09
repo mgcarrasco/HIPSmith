@@ -33,7 +33,7 @@ You can build HIPSmith from source. The following commands assume a standard Lin
     # Compile
     make
     ```
-    *Note: `cmake ..` will automatically copy `csmith.h`, `HIPSmith.h`, and generate `safe_math_macros.h` into your build directory.*
+    *Note: `cmake ..` will automatically copy `csmith.h`, `HIPSmith.h`, `HIPSmithPrint.h`, and generate `safe_math_macros.h` into your build directory.*
 
 ## Use HIPSmith
 
@@ -79,8 +79,10 @@ statements). `how` is a ROCgdb `print` expression;
 for gdb comparison; that size is not a source operand, so a reducer cannot
 rewrite it.
 
-The expansion is chosen at compile time, so one generated program can be built
-in any of these modes without regenerating:
+The `PRINT_*` macros are defined in `runtime/HIPSmithPrint.h`, which
+`HIPSmith.h` includes; generated code needs no extra `#include`. The expansion
+is chosen at compile time, so one generated program can be built in any of
+these modes without regenerating:
 
 | Define | `PRINT_*` expands to |
 |---|---|

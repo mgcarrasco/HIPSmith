@@ -267,6 +267,12 @@ configure_file(
 )
 
 configure_file(
+    "${CMAKE_SOURCE_DIR}/runtime/HIPSmithPrint.h"
+    "${CMAKE_BINARY_DIR}/HIPSmithPrint.h"
+    COPYONLY
+)
+
+configure_file(
     "${CMAKE_SOURCE_DIR}/runtime/csmith.h"
     "${CMAKE_BINARY_DIR}/csmith.h"
     COPYONLY

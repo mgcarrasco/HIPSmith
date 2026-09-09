@@ -22,67 +22,8 @@ DEVICE_FORCE_INLINE void transparent_crc_no_string(uint64_t *crc64_context,
 
 #define transparent_crc_(A, B, C, D) transparent_crc_no_string(A, B)
 
-#if defined(HIPSMITH_PRINT_NOOP) && defined(HIPSMITH_PRINT_ESCAPE)
-#error "HIPSMITH_PRINT_NOOP and HIPSMITH_PRINT_ESCAPE are mutually exclusive"
-#endif
-
-#ifdef HIPSMITH_PRINT_NOOP
-#define PRINT_INT8(v, lineno, how, id) ((void)0)
-#define PRINT_UINT8(v, lineno, how, id) ((void)0)
-#define PRINT_INT16(v, lineno, how, id) ((void)0)
-#define PRINT_UINT16(v, lineno, how, id) ((void)0)
-#define PRINT_INT(v, lineno, how, id) ((void)0)
-#define PRINT_UINT(v, lineno, how, id) ((void)0)
-#define PRINT_INT64(v, lineno, how, id) ((void)0)
-#define PRINT_UINT64(v, lineno, how, id) ((void)0)
-#elif defined(HIPSMITH_PRINT_ESCAPE)
-// Device-only mode: rather than printing, read the variable through a volatile
-// lvalue and discard the result. Taking the address forces the variable to have
-// a memory home, and a volatile read must be emitted at every -O level, so the
-// storage survives optimisation. The load is the point, not the value.
-// lineno/how/id are unused in this mode.
-//
-// Deliberately a macro and not an inline helper: a helper shows up as
-// DW_TAG_inlined_subroutine in the device DWARF, perturbing the very line
-// tables that --hip-print-same-line exists to control.
-#define HIPSMITH_ESCAPE(v) ((void)*(const volatile decltype(v) *)&(v))
-#define PRINT_INT8(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_UINT8(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_INT16(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_UINT16(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_INT(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_UINT(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_INT64(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#define PRINT_UINT64(v, lineno, how, id) HIPSMITH_ESCAPE(v)
-#else
-#ifdef __HIP_DEVICE_COMPILE__
-#define HIPSMITH_PRINT(v, lineno, how, id, fmt, val)                           \
-  printf("[line %d] tid(%u,%u,%u) %s = " fmt " how='%s' id=%d sizeof=%u\n",     \
-         (int)(lineno), (unsigned)threadIdx.x, (unsigned)threadIdx.y,          \
-         (unsigned)threadIdx.z, #v, val, how, (int)(id),                       \
-         (unsigned)sizeof(v))
-#else
-#define HIPSMITH_PRINT(v, lineno, how, id, fmt, val)                           \
-  printf("[line %d] %s = " fmt " how='%s' id=%d sizeof=%u\n", (int)(lineno),    \
-         #v, val, how, (int)(id), (unsigned)sizeof(v))
-#endif
-#define PRINT_INT8(v, lineno, how, id)                                         \
-  HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
-#define PRINT_UINT8(v, lineno, how, id)                                        \
-  HIPSMITH_PRINT(v, lineno, how, id, "%u", (unsigned)(v))
-#define PRINT_INT16(v, lineno, how, id)                                        \
-  HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
-#define PRINT_UINT16(v, lineno, how, id)                                       \
-  HIPSMITH_PRINT(v, lineno, how, id, "%u", (unsigned)(v))
-#define PRINT_INT(v, lineno, how, id)                                          \
-  HIPSMITH_PRINT(v, lineno, how, id, "%d", (int)(v))
-#define PRINT_UINT(v, lineno, how, id)                                         \
-  HIPSMITH_PRINT(v, lineno, how, id, "%u", (unsigned)(v))
-#define PRINT_INT64(v, lineno, how, id)                                        \
-  HIPSMITH_PRINT(v, lineno, how, id, "%lld", (long long)(v))
-#define PRINT_UINT64(v, lineno, how, id)                                       \
-  HIPSMITH_PRINT(v, lineno, how, id, "%llu", (unsigned long long)(v))
-#endif
+// PRINT_* macro family; see HIPSmithPrint.h for the three expansion modes.
+#include "HIPSmithPrint.h"
 
 typedef unsigned char uchar;
 typedef unsigned short ushort;
