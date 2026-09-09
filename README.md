@@ -74,8 +74,10 @@ HIPSmith accepts the following HIP-specific flags:
 #### Scalar print statements
 
 `--hip-print` emits `PRINT_<TYPE>(lvalue, __LINE__, how, id);` (~10% of
-statements). `how` is a ROCgdb `print` expression; `id` is a stable
-generation-order integer.
+statements). `how` is a ROCgdb `print` expression;
+`id` is a stable generation-order integer. The macro prints `sizeof(lvalue)`
+for gdb comparison; that size is not a source operand, so a reducer cannot
+rewrite it.
 
 Default expansion is `printf`; `-DHIPSMITH_PRINT_NOOP` makes it `((void)0)`
 without regenerating.
