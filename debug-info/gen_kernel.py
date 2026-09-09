@@ -10,6 +10,7 @@ includes by name so the directory can be compiled as-is.
   ./gen_kernel.py --seed 42          # reproduce a previous seed
   ./gen_kernel.py --no-same-line     # plain --hip-print instead
   ./gen_kernel.py --no-print         # no print statements at all
+  ./gen_kernel.py --no-argc-threads  # let the flags decide the launch geometry
 """
 
 import argparse
@@ -24,8 +25,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 # Flags that are picked at random, in any combination.
-# --small is deliberately absent, and the print flags are driven from the CLI
-# rather than chosen randomly.
+# --small is deliberately absent, and the print and --hip-argc-threads flags are
+# driven from the CLI rather than chosen randomly.
 HIP_FLAGS = [
     "--vectors",
     "--atomics",
@@ -89,6 +90,10 @@ def main():
     parser.add_argument("--no-same-line", dest="same_line",
                         action="store_false",
                         help="pass --hip-print instead of --hip-print-same-line")
+    parser.add_argument("--no-argc-threads", dest="argc_threads",
+                        action="store_false",
+                        help="omit --hip-argc-threads, so the randomly picked "
+                             "flags decide the launch geometry")
     args = parser.parse_args()
 
     seed = args.seed if args.seed is not None else fresh_entropy()
@@ -102,6 +107,9 @@ def main():
     if args.print_:
         # --hip-print-same-line already implies --hip-print.
         flags.append("--hip-print-same-line" if args.same_line else "--hip-print")
+    if args.argc_threads:
+        # Single thread, so the CRC does not depend on how the threads interleave.
+        flags.append("--hip-argc-threads")
     flags.sort()
 
     binary = find_binary(args.hipsmith)

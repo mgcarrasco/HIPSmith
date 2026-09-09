@@ -32,6 +32,10 @@ class HIPOptions {
   //                            breakpoint on that line lands on the PRINT, not
   //                            on a prior statement. Omit if there is no such
   //                            following host.
+  // hip_argc_threads         - derive both num_threads and block_size from argc
+  //                            in the driver, forcing a single thread when the
+  //                            binary is run with no arguments. Implied by the
+  //                            flags that need it; this requests it on its own.
 
 #define DEFINE_HIPFLAG(name, type) \
  private:                          \
@@ -61,6 +65,7 @@ class HIPOptions {
   DEFINE_HIPFLAG(hip_warp_shuffle, bool)
   DEFINE_HIPFLAG(hip_warp_reduce, bool)
   DEFINE_HIPFLAG(hip_atomic, bool)
+  DEFINE_HIPFLAG(hip_argc_threads, bool)
 
 #undef DEFINE_HIPFLAG
 

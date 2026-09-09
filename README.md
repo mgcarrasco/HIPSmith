@@ -56,6 +56,7 @@ HIPSmith accepts the following HIP-specific flags:
 | `--seed <N>` | Fix the random seed for reproducible output |
 | `--small` | Restrict output size (max 3 functions, shallower blocks/expressions/arrays) |
 | `--vectors` | Enable HIP vector types |
+| `--atomics` | Enable atomic operations |
 | `--hip-consts` | Generate global read-only `__constant__` variables |
 | `--hip-shared` | Generate `__shared__` local memory variables |
 | `--no-hip-shared-safe-static-init` | Disable the restrictions that avoid unsupported `__shared__` features under `--hip-shared` |
@@ -70,6 +71,7 @@ HIPSmith accepts the following HIP-specific flags:
 | `--hip-warp-match` | Enable warp match operations (`__match_any_sync`, etc.) |
 | `--hip-warp-shuffle` | Enable warp shuffle operations (`__shfl_*`) |
 | `--hip-warp-reduce` | Enable warp reduction operations |
+| `--hip-argc-threads` | Derive `num_threads` and `block_size` from `argc`, forcing a single thread |
 
 #### Scalar print statements
 
@@ -105,3 +107,5 @@ Several flags cause the driver to derive these values from `argc` instead, so th
 | `--hip-warp-match` | yes | yes |
 | `--hip-warp-shuffle` | yes | yes |
 | `--hip-warp-reduce` | yes | yes |
+| `--atomics` | yes | yes |
+| `--hip-argc-threads` | yes | yes |

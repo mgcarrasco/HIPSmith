@@ -108,6 +108,11 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    if (strcmp(argv[idx], "--hip-argc-threads") == 0) {
+      HIPSmith::HIPOptions::hip_argc_threads(true);
+      continue;
+    }
+
     if (strcmp(argv[idx], "--small") == 0) {
       HIPSmith::HIPOptions::small(true);
       continue;
