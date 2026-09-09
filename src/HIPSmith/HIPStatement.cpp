@@ -40,16 +40,51 @@ const char *print_macro(eSimpleType t) {
   }
 }
 
-void collect_printable(const Variable *v, std::vector<const Variable *> &out) {
+// Whether a leaf can be handed to a PRINT_* macro. Arrays are excluded here:
+// only an itemized array member carries subscripts in its name.
+bool is_printable_leaf(const Variable *v) {
+  return v->type && print_macro(v->type->simple_type) && !v->isArray &&
+         !v->isBitfield_ && !v->is_volatile() && !v->is_inside_union_field() &&
+         !v->is_hip_builtin();
+}
+
+// Flatten a variable into the leaves a PRINT_* macro accepts. Never call this
+// on a collective array variable: the field vars of one are named "a.f0",
+// without the subscript, because Variable::create_field_vars builds the name
+// from ArrayVariable::Output, which emits no indices for a collective. Those
+// names are fact-tracking identities, not emittable expressions.
+void collect_leaves(const Variable *v, std::vector<const Variable *> &out) {
   if (v->type && v->type->eType == eStruct) {
+    for (const Variable *f : v->field_vars) collect_leaves(f, out);
+    return;
+  }
+  if (is_printable_leaf(v)) out.push_back(v);
+}
+
+bool has_printable_leaf(const Variable *v) {
+  std::vector<const Variable *> leaves;
+  collect_leaves(v, leaves);
+  return !leaves.empty();
+}
+
+// Gather the PRINT candidates visible at a statement. An array of structs is
+// offered as the array itself, so that choose_ok_var() itemizes it and the
+// fields of the itemized member come out subscripted; expanding it here would
+// yield "l_361.f3", which is not valid C++.
+void collect_printable(const Variable *v, std::vector<const Variable *> &out) {
+  if (!v->type) return;
+  if (v->isArray) {
+    if (v->type->eType == eStruct && v->get_collective() == v &&
+        has_printable_leaf(v)) {
+      out.push_back(v);
+    }
+    return;
+  }
+  if (v->type->eType == eStruct) {
     for (const Variable *f : v->field_vars) collect_printable(f, out);
     return;
   }
-  if (v->type && print_macro(v->type->simple_type) && !v->isArray &&
-      !v->isBitfield_ && !v->is_volatile() && !v->is_inside_union_field() &&
-      !v->is_hip_builtin()) {
-    out.push_back(v);
-  }
+  if (is_printable_leaf(v)) out.push_back(v);
 }
 
 unsigned next_print_id = 1;
@@ -69,6 +104,14 @@ class StatementPrint : public Statement {
     for (const Variable *v : visible) collect_printable(v, candidates);
     const Variable *var = VariableSelector::choose_ok_var(candidates);
     if (!var) return NULL;
+    if (var->isArray) {
+      // choose_ok_var() itemized the array; the fields of an itemized member
+      // are named "l_361[0].f3", so they are emittable.
+      std::vector<const Variable *> leaves;
+      collect_leaves(var, leaves);
+      var = VariableSelector::choose_ok_var(leaves);
+      if (!var) return NULL;
+    }
     if (!cg_context.check_read_var(var, get_fact_mgr(&cg_context)->global_facts))
       return NULL;
     return new StatementPrint(cg_context.get_current_block(), var,
