@@ -90,6 +90,14 @@ def main() -> int:
     if args.print_noop:
         cmd.append("-DHIPSMITH_PRINT_NOOP")
     cmd.append("-DHIP_ENABLE_EXTRA_WARP_SYNC_TYPES=1")
+    cmd.extend(
+        [
+            "-fno-strict-aliasing",
+            "-Wno-c++11-narrowing",
+            "-Wno-unused-value",
+            "-fno-finite-loops",
+        ]
+    )
     for include_dir in args.include_dirs:
         cmd.extend(["-I", str(Path(include_dir).resolve())])
     cmd.extend(["-I", str(hip_file.parent)])
