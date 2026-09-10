@@ -55,6 +55,10 @@ def parse_args() -> argparse.Namespace:
                         help="Path to the HIPSmith binary, passed to fuzz-one.py "
                              "(fuzz-one.py and gen_kernel.py have no auto-discovery "
                              "fallback, so this is always required)")
+    parser.add_argument("--generate-timeout", type=float, default=30.0,
+                        metavar="SECONDS",
+                        help="Generation timeout inside each iteration "
+                             "(default: 30)")
     parser.add_argument("--build-timeout", type=float, default=30.0,
                         metavar="SECONDS",
                         help="Per-build timeout inside each iteration (default: 30)")
@@ -101,6 +105,7 @@ def run_iteration(index: int, args: argparse.Namespace, out_dir: Path,
         "--amdclang", str(args.amdclang),
         "--rocgdb", str(args.rocgdb),
         "--hipsmith", str(args.hipsmith),
+        "--generate-timeout", str(args.generate_timeout),
         "--build-timeout", str(args.build_timeout),
         "--run-timeout", str(args.run_timeout),
         "--offload-arch", args.offload_arch,

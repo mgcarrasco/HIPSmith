@@ -15,7 +15,8 @@ directory, so the binaries can be deleted: any finding is reproducible from
 
 Exit codes:
   0  everything ran
-  2  HIPSmith failed to generate (commonly a code-generation assertion)
+  2  HIPSmith failed to generate (commonly a code-generation assertion) or
+     timed out
   3  a build failed or timed out
   4  a kernel run failed or timed out
   5  a ROCgdb probe failed
@@ -81,6 +82,9 @@ def parse_args() -> argparse.Namespace:
                         help="Path to amdclang++")
     parser.add_argument("--rocgdb", required=True, type=Path,
                         help="Path to rocgdb")
+    parser.add_argument("--generate-timeout", type=float, default=30.0,
+                        metavar="SECONDS",
+                        help="Timeout for generation (default: 30)")
     parser.add_argument("--build-timeout", required=True, type=float,
                         metavar="SECONDS",
                         help="Timeout for each build")
@@ -165,21 +169,36 @@ def generate(args: argparse.Namespace, gen_seed: int,
     # Leave --hip-print-same-line on: in noop mode PRINT_* expands to ((void)0),
     # so a breakpoint only has something to land on because the PRINT shares its
     # line with a real statement.
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          text=True)
+    timed_out = False
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, timeout=args.generate_timeout)
+        exit_code, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired as exc:
+        # Some seeds wedge HIPSmith outright. Nothing downstream bounds this
+        # stage, so without a timeout here the whole iteration hangs forever.
+        exit_code, timed_out = None, True
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+
     flags: list[str] = []
-    for line in proc.stdout.splitlines():
+    for line in stdout.splitlines():
         if line.startswith("flags:"):
             flags = line.split(":", 1)[1].split()
     record = {
         "cmd": cmd,
-        "exit_code": proc.returncode,
-        "ok": proc.returncode == 0,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "ok": exit_code == 0,
         "flags": flags,
     }
-    if proc.returncode != 0:
-        record["stdout_tail"] = proc.stdout[-4000:]
-        record["stderr_tail"] = proc.stderr[-4000:]
+    if not record["ok"]:
+        record["stdout_tail"] = stdout[-4000:]
+        record["stderr_tail"] = stderr[-4000:]
     return record, flags
 
 
