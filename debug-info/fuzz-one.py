@@ -299,7 +299,23 @@ def main() -> int:
             cmd = [sys.executable, str(RUN_KERNEL), str(tmp_path / f"{name}.out"),
                    "--timeout", str(args.run_timeout), "-o", str(out)]
             record = run_step(cmd, args.run_timeout * 2 + 60)
-            record["report"] = read_json(out)
+            kernel_report = read_json(out)
+            record["report"] = kernel_report
+            # run_kernel.py exits 0 even when the kernel itself died — it only
+            # fails on a cross-thread CRC mismatch, and otherwise just records
+            # the child's status in the report. A kernel killed on its own
+            # timeout (-9) is the case that matters: its print list is truncated
+            # at an arbitrary point and its CRC is null, so treating the run as
+            # successful would feed a half-finished sample to the gdb stage and
+            # to whatever compares the outputs afterwards.
+            kernel_exit = (kernel_report or {}).get("exit_code")
+            record["kernel_exit_code"] = kernel_exit
+            if record["ok"] and kernel_exit != 0:
+                record["ok"] = False
+                record["failure"] = (
+                    "no report from run_kernel.py" if kernel_report is None
+                    else "kernel killed on timeout" if kernel_exit == -9
+                    else f"kernel exited {kernel_exit}")
             return name, record
 
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
