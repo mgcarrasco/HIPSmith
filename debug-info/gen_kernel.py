@@ -22,8 +22,6 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-
 # Flags that are picked at random, in any combination.
 # --small is deliberately absent, and the print and --hip-argc-threads flags are
 # driven from the CLI rather than chosen randomly.
@@ -48,8 +46,6 @@ REQUIRED_HEADERS = ["HIPSmith.h", "HIPSmithPrint.h", "safe_math_macros.h"]
 # Files HIPSmith writes into its working directory.
 GENERATED = ["HIPProg.hip", "HIP-driver.cpp"]
 
-BUILD_DIRS = ["build-same-line", "build-local", "build"]
-
 
 def fresh_entropy():
     """A value that differs even between processes started in the same instant.
@@ -64,17 +60,6 @@ def fresh_entropy():
     return value % (2**31)
 
 
-def find_binary(explicit):
-    if explicit:
-        return Path(explicit)
-    for name in BUILD_DIRS:
-        candidate = REPO / name / "HIPSmith"
-        if candidate.is_file():
-            return candidate
-    sys.exit("error: no HIPSmith binary found under "
-             f"{REPO}/{{{','.join(BUILD_DIRS)}}}; pass --hipsmith")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -84,7 +69,8 @@ def main():
                              "(default: ./hipsmith-<seed>)")
     parser.add_argument("--seed", type=int,
                         help="use this seed instead of a random one")
-    parser.add_argument("--hipsmith", help="path to the HIPSmith binary")
+    parser.add_argument("--hipsmith", required=True,
+                        help="path to the HIPSmith binary")
     parser.add_argument("--no-print", dest="print_", action="store_false",
                         help="generate no print statements at all")
     parser.add_argument("--no-same-line", dest="same_line",
@@ -112,7 +98,7 @@ def main():
         flags.append("--hip-argc-threads")
     flags.sort()
 
-    binary = find_binary(args.hipsmith)
+    binary = Path(args.hipsmith)
     if not binary.is_file():
         sys.exit(f"error: {binary} is not a file")
 

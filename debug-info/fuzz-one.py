@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path,
                         help="Where to keep the generated source and the report "
                              "(default: ./fuzz-<seed>)")
-    parser.add_argument("--hipsmith", type=Path,
+    parser.add_argument("--hipsmith", required=True, type=Path,
                         help="Path to the HIPSmith binary, passed to gen_kernel.py")
     parser.add_argument("-o", "--json", type=Path,
                         help="Also write the report here (default: stdout)")
@@ -161,9 +161,7 @@ def run_step(cmd: list[str], timeout: float) -> dict[str, Any]:
 def generate(args: argparse.Namespace, gen_seed: int,
              out_dir: Path) -> tuple[dict[str, Any], list[str]]:
     cmd = [sys.executable, str(GEN_KERNEL), "--seed", str(gen_seed),
-           "-o", str(out_dir)]
-    if args.hipsmith:
-        cmd += ["--hipsmith", str(args.hipsmith)]
+           "-o", str(out_dir), "--hipsmith", str(args.hipsmith)]
     # Leave --hip-print-same-line on: in noop mode PRINT_* expands to ((void)0),
     # so a breakpoint only has something to land on because the PRINT shares its
     # line with a real statement.
