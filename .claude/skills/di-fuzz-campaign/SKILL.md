@@ -31,6 +31,14 @@ It detects the installed GPU arch, picks the nightly family covering it, downloa
 unpacks it, and prints a JSON object with `arch`, `family`, `version`, `amdclang` and
 `rocgdb`. Read the paths out of that JSON rather than guessing them.
 
+It also writes a `DOWNLOADED_NIGHTLY` marker file into `--dest`, recording the tarball
+URL, family, version and arch used. The unpacked tree itself does not state this
+date-tagged nightly version anywhere — component headers and `amdclang++ --version`
+only expose per-component git commit hashes — so this marker is the only record of
+which nightly (and from which link) is sitting at that path. If `--dest` is later reused
+without this marker present (e.g. a toolchain fetched by an older version of the
+script, or unpacked by hand), treat the version as unknown rather than guessing.
+
 Useful variants:
 
 - `--list` — show the versions available for this GPU without downloading. Only about

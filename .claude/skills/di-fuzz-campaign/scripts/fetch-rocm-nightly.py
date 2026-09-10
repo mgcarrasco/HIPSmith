@@ -17,7 +17,10 @@ covers it, preferring an exact match over a wildcard one.
   ./fetch-rocm-nightly.py --arch gfx942 --dest ...               # override detection
 
 On success a JSON object describing the toolchain (arch, family, version, and the
-absolute amdclang/rocgdb paths) is written to stdout; progress goes to stderr.
+absolute amdclang/rocgdb paths) is written to stdout; progress goes to stderr. A
+`DOWNLOADED_NIGHTLY` marker file recording the tarball URL, family, version and arch is
+also written into `--dest` — the unpacked tree itself only exposes per-component build
+hashes, not this date-tagged nightly version or where it was fetched from.
 
 Exit codes:
   0  toolchain ready at --dest
@@ -33,6 +36,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -159,6 +163,22 @@ def pick_family(by_family: dict[str, dict[str, str]], arch: str,
     )
 
 
+def write_marker(dest: Path, *, url: str, family: str, version: str, arch: str,
+                 reused: bool) -> None:
+    """Record which nightly is unpacked at dest, so it can be identified later —
+    the tree itself only exposes per-component build hashes, not this date-tagged
+    nightly version or the URL it came from."""
+    marker = dest / "DOWNLOADED_NIGHTLY"
+    marker.write_text(
+        f"url: {url}\n"
+        f"family: {family}\n"
+        f"version: {version}\n"
+        f"arch: {arch}\n"
+        f"recorded: {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
+        f"{'reused existing toolchain at this path' if reused else 'freshly downloaded'}\n"
+    )
+
+
 def download(url: str, target: Path) -> None:
     curl = shutil.which("curl")
     if curl is None:
@@ -241,13 +261,15 @@ def main() -> int:
     amdclang = dest / "bin" / "amdclang++"
     rocgdb = dest / "bin" / "rocgdb"
 
-    if amdclang.is_file() and rocgdb.is_file() and not args.force:
+    url = INDEX_URL + filename
+    reused = amdclang.is_file() and rocgdb.is_file() and not args.force
+    if reused:
         print(f"reusing existing toolchain at {dest}", file=sys.stderr)
     else:
         dest.mkdir(parents=True, exist_ok=True)
         tarball = dest.parent / filename
         if not tarball.is_file() or args.force:
-            download(INDEX_URL + filename, tarball)
+            download(url, tarball)
         print(f"unpacking into {dest}", file=sys.stderr)
         # The archive holds ./bin, ./lib, ... so it unpacks straight into dest.
         result = subprocess.run(["tar", "-xzf", str(tarball), "-C", str(dest)])
@@ -262,6 +284,9 @@ def main() -> int:
         print(f"error: toolchain incomplete, missing: {', '.join(missing)}",
               file=sys.stderr)
         return 1
+
+    write_marker(dest, url=url, family=family, version=version, arch=arch,
+                 reused=reused)
 
     json.dump({
         "arch": arch,
