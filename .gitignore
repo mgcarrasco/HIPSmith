@@ -47,3 +47,5 @@ vol_addr.txt
 # Build 
 build/
 include/
+# Local Claude Code worktrees, not part of the project.
+.claude/worktrees/
