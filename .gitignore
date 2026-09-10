@@ -44,8 +44,9 @@ platform.info
 # Files made by Csmith-generated programs.
 vol_addr.txt
 
-# Build 
+# Build
 build/
+build-debug/
 include/
 # Local Claude Code worktrees, not part of the project.
 .claude/worktrees/
