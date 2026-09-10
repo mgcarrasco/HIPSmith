@@ -81,6 +81,11 @@ def parse_args() -> argparse.Namespace:
                              "iteration (default: 30)")
     parser.add_argument("--offload-arch", default="native",
                         help="Value for --offload-arch (default: native)")
+    parser.add_argument("--gisel", action=argparse.BooleanOptionalAction,
+                        default=False,
+                        help="Pass --gisel to fuzz-one.py, letting iterations "
+                             "pick -mllvm -global-isel=true at random "
+                             "(default: --no-gisel)")
     parser.add_argument("--workers", type=int, default=12,
                         help="Concurrent fuzz-one.py subprocesses (default: 12)")
     parser.add_argument("--inner-jobs", type=int, default=9,
@@ -124,6 +129,7 @@ def run_iteration(index: int, args: argparse.Namespace, out_dir: Path,
         "--build-timeout", str(args.build_timeout),
         "--run-timeout", str(args.run_timeout),
         "--offload-arch", args.offload_arch,
+        "--gisel" if args.gisel else "--no-gisel",
         "--jobs", str(args.inner_jobs),
         "--out-dir", str(gen_dir),
     ]

@@ -119,6 +119,11 @@ def parse_args() -> argparse.Namespace:
                         help="Timeout for each kernel run and each gdb probe")
     parser.add_argument("--offload-arch", default="native",
                         help="Value for --offload-arch (default: native)")
+    parser.add_argument("--gisel", action=argparse.BooleanOptionalAction,
+                        default=False,
+                        help="Let the configuration pick -mllvm "
+                             "-global-isel=true at random (default: --no-gisel, "
+                             "never add it to any build)")
     parser.add_argument("--jobs", type=int, default=9,
                         help="Parallel builds, runs and gdb probes (default: 9, "
                              "one per build variant)")
@@ -134,11 +139,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def pick_config(rng: random.Random, offload_arch: str) -> dict[str, Any]:
+def pick_config(rng: random.Random, offload_arch: str,
+                allow_gisel: bool = False) -> dict[str, Any]:
     """Choose the target configuration, then derive the reference and the
-    UB-check configurations from it."""
+    UB-check configurations from it.
+
+    With allow_gisel false — the default — GlobalISel is off for every build in
+    the iteration, not merely for the UB-check ones, so that the target and its
+    UB-check rebuilds still differ in optimisation alone.
+    """
     opt = rng.choice(OPT_LEVELS)
-    global_isel = rng.choice([False, True])
+    # Drawn either way so that a seed maps to the same opt and liveness whether
+    # or not GlobalISel is allowed; only the outcome is forced.
+    global_isel = rng.choice([False, True]) and allow_gisel
     extend_liveness = rng.choice([False, True])
 
     # Everything the target is built with except its optimisation level. The
@@ -290,7 +303,7 @@ def main() -> int:
     # Derive the generator seed from ours, so --seed reproduces the whole
     # iteration rather than just the compiler configuration.
     gen_seed = rng.randrange(2**31)
-    config = pick_config(rng, args.offload_arch)
+    config = pick_config(rng, args.offload_arch, allow_gisel=args.gisel)
 
     out_dir = (args.out_dir or Path(f"fuzz-{seed}")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)

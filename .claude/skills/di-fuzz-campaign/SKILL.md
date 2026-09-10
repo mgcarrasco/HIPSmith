@@ -101,6 +101,8 @@ debug-info/di-fuzz-campaign.py \
   otherwise; lower both together if contention shows up as timeouts.
 - Use a `--out-dir` on a filesystem with room. Every iteration keeps its generated
   sources and reports; a busy hour produces thousands of run directories.
+- `--gisel` lets iterations pick `-mllvm -global-isel=true` at random. Off by default;
+  pass it only if the user asks for GlobalISel coverage.
 
 Long campaigns should be started in the background so progress can be checked while
 they run.
