@@ -2,8 +2,8 @@
 """Run many fuzz-one.py iterations in parallel, continuously, and collect a dataset.
 
 Each iteration is an independent `fuzz-one.py` subprocess: generate a random kernel,
-build it 9 ways, run each, and gdb-probe the 6 debug-info builds among them (the other
-3 are UB-check rebuilds of target.printf at pinned optimisation levels). This script
+build it 10 ways, run each, and gdb-probe the 6 debug-info builds among them (the other
+4 are UB-check rebuilds of target.printf at pinned optimisation levels). This script
 only orchestrates that — it does not judge whether an iteration is "interesting" beyond
 fuzz-one.py's own mechanical exit code (0 ok, 2 generate failed, 3 build failed, 4 run
 failed, 5 gdb probe failed). The UB-check builds count towards codes 3 and 4 like any
@@ -46,13 +46,22 @@ SCRIPTS = Path(__file__).resolve().parent
 FUZZ_ONE = SCRIPTS / "fuzz-one.py"
 
 # fuzz-one.py builds target/reference x printf/noop/escape plus three UB-check
-# rebuilds of target.printf. It runs all of them, but gdb-probes only the six
-# debug-info builds, so its build and run stages have more items to get through
-# than its gdb stage.
+# rebuilds of target.printf, and a fourth under ASan unless --no-asan-check. It
+# runs all of them, but gdb-probes only the six debug-info builds, so its build
+# and run stages have more items to get through than its gdb stage.
 DI_VARIANTS = 6
 UBCHECK_VARIANTS = 3
-BUILD_VARIANTS = DI_VARIANTS + UBCHECK_VARIANTS
 GDB_VARIANTS = DI_VARIANTS
+
+
+def build_variants(asan_check: bool) -> int:
+    """How many builds fuzz-one.py will make with these settings.
+
+    An upper bound rather than an exact count: when the target is already -O0 or
+    -O3 one UB-check variant is aliased onto it instead of being built again.
+    Overestimating only makes the watchdog more forgiving.
+    """
+    return DI_VARIANTS + UBCHECK_VARIANTS + (1 if asan_check else 0)
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,8 +97,13 @@ def parse_args() -> argparse.Namespace:
                              "(default: --no-gisel)")
     parser.add_argument("--workers", type=int, default=12,
                         help="Concurrent fuzz-one.py subprocesses (default: 12)")
-    parser.add_argument("--inner-jobs", type=int, default=9,
-                        help="Each fuzz-one.py's own --jobs (default: 9, one per "
+    parser.add_argument("--asan-check", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Pass --asan-check to fuzz-one.py, adding an -O0 "
+                             "device-AddressSanitizer rebuild of the target "
+                             "(default: on)")
+    parser.add_argument("--inner-jobs", type=int, default=10,
+                        help="Each fuzz-one.py's own --jobs (default: 10, one per "
                              "build variant). workers * inner-jobs concurrent "
                              "build/run/gdb workers contend for the GPU; lower this "
                              "pair if contention produces spurious timeouts.")
@@ -103,9 +117,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iteration-timeout", type=float, metavar="SECONDS",
                         help="Hard per-iteration watchdog, independent of "
                              "fuzz-one.py's own internal timeouts (default: "
-                             "generate-timeout + ceil(9 / inner-jobs) * "
-                             "(build-timeout + run-timeout) + ceil(6 / inner-jobs) * "
-                             "run-timeout + 60)")
+                             "generate-timeout + ceil(builds / inner-jobs) * "
+                             "(build-timeout + run-timeout) + ceil(6 / inner-jobs) "
+                             "* run-timeout + 60, where builds is 10, or 9 under "
+                             "--no-asan-check)")
     parser.add_argument("-o", "--summary", type=Path,
                         help="Path to the live campaign index "
                              "(default: <out-dir>/campaign.json)")
@@ -130,6 +145,7 @@ def run_iteration(index: int, args: argparse.Namespace, out_dir: Path,
         "--run-timeout", str(args.run_timeout),
         "--offload-arch", args.offload_arch,
         "--gisel" if args.gisel else "--no-gisel",
+        "--asan-check" if args.asan_check else "--no-asan-check",
         "--jobs", str(args.inner_jobs),
         "--out-dir", str(gen_dir),
     ]
@@ -202,12 +218,13 @@ def main() -> int:
 
     iteration_timeout = args.iteration_timeout
     if iteration_timeout is None:
-        # The build and run stages push BUILD_VARIANTS items through a pool of
-        # --inner-jobs and the gdb stage pushes GDB_VARIANTS, so each takes that
-        # many rounds; generation is a single step. Worst case every step in
-        # every round hits its own timeout, then a minute of slack for process
-        # spawn, temp-dir cleanup and report writes.
-        build_rounds = math.ceil(BUILD_VARIANTS / args.inner_jobs)
+        # The build and run stages push one item per build variant through a
+        # pool of --inner-jobs and the gdb stage pushes GDB_VARIANTS, so each
+        # takes that many rounds; generation is a single step. Worst case every
+        # step in every round hits its own timeout, then a minute of slack for
+        # process spawn, temp-dir cleanup and report writes.
+        build_rounds = math.ceil(
+            build_variants(args.asan_check) / args.inner_jobs)
         gdb_rounds = math.ceil(GDB_VARIANTS / args.inner_jobs)
         iteration_timeout = (args.generate_timeout
                              + build_rounds * (args.build_timeout

@@ -96,7 +96,7 @@ debug-info/di-fuzz-campaign.py \
   finish, so the wall-clock overshoot can be up to one iteration watchdog period.
 - Pass `--offload-arch` explicitly using the arch from step 1 rather than relying on its
   `native` default, so the campaign is reproducible and does not silently retarget.
-- `--workers` (default 12) and `--inner-jobs` (default 6) multiply into concurrent
+- `--workers` (default 12) and `--inner-jobs` (default 10) multiply into concurrent
   build/run/gdb workers contending for the GPU. Keep the defaults unless the user asks
   otherwise; lower both together if contention shows up as timeouts.
 - Use a `--out-dir` on a filesystem with room. Every iteration keeps its generated

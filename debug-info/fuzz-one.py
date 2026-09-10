@@ -6,9 +6,10 @@ derives a "reference" configuration from it by turning off instruction
 referencing. Both are built in the three PRINT modes, run, and probed under
 ROCgdb; the outputs are collected into a single JSON report.
 
-Alongside those six, the target is rebuilt in printf mode three more times with
-its optimisation level replaced by -O0, by -O3, and by -O0 plus trapping UBSan.
-These UB-check variants are built and run like any other, but are not
+Alongside those six, the target is rebuilt in printf mode up to four more times
+with its optimisation level replaced by -O0, by -O3, by -O0 plus trapping
+UBSan, and — unless --no-asan-check — by -O0 plus device AddressSanitizer on an
+xnack+ offload arch. These UB-check variants are built and run like any other, but are not
 gdb-probed: if they do not all print what target.printf printed, the kernel has
 undefined behaviour or has been miscompiled and is not a trustworthy debug-info
 sample. This script does not make that comparison — it records the outputs and
@@ -62,6 +63,17 @@ REFERENCE_ONLY = ["-mllvm", "-experimental-debug-variable-locations=false"]
 # so a violation aborts the kernel and the run stage records the failure.
 UBSAN_ONLY = ["-fsanitize=undefined", "-fsanitize-trap=all"]
 
+# Device ASan needs an xnack+ offload arch or the driver silently drops the
+# instrumentation, and it needs xnack switched on again at run time. There is no
+# instrumented libamdhip64.so in the toolchains this runs against, so a device
+# fault has no hostcall handler to report through and the process aborts without
+# a diagnostic; that still fails the run, which is all this variant is for.
+# detect_leaks is off because LeakSanitizer reports the HSA runtime's own
+# allocations and would fail every run.
+ASAN_ONLY = ["-fsanitize=address"]
+ASAN_ARCH_SUFFIX = ":xnack+"
+ASAN_ENV = {"HSA_XNACK": "1", "ASAN_OPTIONS": "detect_leaks=0"}
+
 # (name, configuration, extra build_kernel.py flags)
 DI_BUILDS = [
     ("target.printf", "target", []),
@@ -82,7 +94,18 @@ UBCHECK_BUILDS = [
     ("ubcheck.ubsan", "ubcheck_ubsan", []),
 ]
 
-ALL_BUILDS = DI_BUILDS + UBCHECK_BUILDS
+# Sibling of ubcheck.ubsan: also -O0, also a sanitizer, also only ever a
+# run-stage verdict. Optional because it is the one variant that cannot use the
+# iteration's own offload arch verbatim.
+ASAN_BUILD = ("ubcheck.asan", "ubcheck_asan", [])
+
+
+def ubcheck_builds(asan_check: bool) -> list[tuple[str, str, list[str]]]:
+    return UBCHECK_BUILDS + ([ASAN_BUILD] if asan_check else [])
+
+
+def all_builds(asan_check: bool) -> list[tuple[str, str, list[str]]]:
+    return DI_BUILDS + ubcheck_builds(asan_check)
 
 EXIT_OK = 0
 EXIT_GEN = 2
@@ -124,8 +147,14 @@ def parse_args() -> argparse.Namespace:
                         help="Let the configuration pick -mllvm "
                              "-global-isel=true at random (default: --no-gisel, "
                              "never add it to any build)")
-    parser.add_argument("--jobs", type=int, default=9,
-                        help="Parallel builds, runs and gdb probes (default: 9, "
+    parser.add_argument("--asan-check", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Also build and run the target at -O0 under device "
+                             "AddressSanitizer (default: on). Needs an xnack+ "
+                             "offload arch, so a 'native' --offload-arch is "
+                             "resolved to a concrete one first")
+    parser.add_argument("--jobs", type=int, default=10,
+                        help="Parallel builds, runs and gdb probes (default: 10, "
                              "one per build variant)")
     parser.add_argument("--seed", type=int,
                         help="Reproduce a previous iteration")
@@ -137,6 +166,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-o", "--json", type=Path,
                         help="Also write the report here (default: stdout)")
     return parser.parse_args()
+
+
+def resolve_offload_arch(arch: str, amdclang: Path) -> str:
+    """Turn 'native' into a concrete arch.
+
+    `--offload-arch=native:xnack+` is rejected outright by the driver, and plain
+    `native` makes it drop the ASan instrumentation with only a warning, so the
+    ASan variant cannot work off 'native'. amdgpu-arch ships beside the compiler
+    and prints one line per visible GPU; the first is the one to build for.
+    """
+    if arch != "native":
+        return arch
+    for candidate in (amdclang.parent / "amdgpu-arch",
+                      amdclang.parent.parent / "lib/llvm/bin/amdgpu-arch"):
+        if not candidate.is_file():
+            continue
+        try:
+            out = subprocess.run([str(candidate)], stdout=subprocess.PIPE,
+                                 text=True, timeout=30, check=True).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        if lines:
+            return lines[0]
+    raise RuntimeError(
+        "--asan-check needs a concrete --offload-arch and amdgpu-arch could not "
+        "supply one; pass --offload-arch explicitly or --no-asan-check")
 
 
 def pick_config(rng: random.Random, offload_arch: str,
@@ -154,16 +210,17 @@ def pick_config(rng: random.Random, offload_arch: str,
     global_isel = rng.choice([False, True]) and allow_gisel
     extend_liveness = rng.choice([False, True])
 
-    # Everything the target is built with except its optimisation level. The
-    # UB-check variants pin their own -O onto this same base, so they differ
-    # from the target in optimisation alone.
-    base = [f"--offload-arch={offload_arch}"]
+    # Everything the target is built with except its optimisation level and its
+    # offload arch. The UB-check variants pin their own -O onto this same base,
+    # so they differ from the target in optimisation alone.
+    extras: list[str] = []
     if global_isel:
         # The driver rejects a bare -global-isel=true; it is an LLVM option.
-        base += ["-mllvm", "-global-isel=true"]
+        extras += ["-mllvm", "-global-isel=true"]
     if extend_liveness:
-        base += ["-fextend-variable-liveness=all"]
+        extras += ["-fextend-variable-liveness=all"]
 
+    base = [f"--offload-arch={offload_arch}"] + extras
     target = [opt] + base
 
     return {
@@ -176,10 +233,16 @@ def pick_config(rng: random.Random, offload_arch: str,
         "ubcheck_O0_flags": ["-O0"] + base,
         "ubcheck_O3_flags": ["-O3"] + base,
         "ubcheck_ubsan_flags": ["-O0"] + base + UBSAN_ONLY,
+        # The only variant that does not share `base`: ASan is ignored unless
+        # the offload arch itself carries xnack+.
+        "ubcheck_asan_flags": (
+            ["-O0", f"--offload-arch={offload_arch}{ASAN_ARCH_SUFFIX}"]
+            + extras + ASAN_ONLY),
     }
 
 
-def ubcheck_aliases(config: dict[str, Any]) -> dict[str, str]:
+def ubcheck_aliases(config: dict[str, Any],
+                    asan_check: bool) -> dict[str, str]:
     """Map each UB-check variant that is already the target build onto it.
 
     When the target's own optimisation level is -O0 or -O3 the corresponding
@@ -190,17 +253,19 @@ def ubcheck_aliases(config: dict[str, Any]) -> dict[str, str]:
     """
     return {
         name: "target.printf"
-        for name, key, _ in UBCHECK_BUILDS
+        for name, key, _ in ubcheck_builds(asan_check)
         if config[f"{key}_flags"] == config["target_flags"]
     }
 
 
-def run_step(cmd: list[str], timeout: float) -> dict[str, Any]:
+def run_step(cmd: list[str], timeout: float,
+             env: dict[str, str] | None = None) -> dict[str, Any]:
     """Run a command, capturing what a failure report needs and nothing more."""
     started = time.perf_counter()
+    child_env = {**os.environ, **env} if env else None
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, timeout=timeout)
+                              text=True, timeout=timeout, env=child_env)
         exit_code, stdout, stderr, timed_out = (
             proc.returncode, proc.stdout, proc.stderr, False)
     except subprocess.TimeoutExpired as exc:
@@ -303,12 +368,21 @@ def main() -> int:
     # Derive the generator seed from ours, so --seed reproduces the whole
     # iteration rather than just the compiler configuration.
     gen_seed = rng.randrange(2**31)
-    config = pick_config(rng, args.offload_arch, allow_gisel=args.gisel)
+    # Resolved before the config so every variant, not just the ASan one, names
+    # the same concrete arch in its recorded flags.
+    try:
+        offload_arch = (resolve_offload_arch(args.offload_arch, args.amdclang)
+                        if args.asan_check else args.offload_arch)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    config = pick_config(rng, offload_arch, allow_gisel=args.gisel)
+    builds_wanted = all_builds(args.asan_check)
 
     out_dir = (args.out_dir or Path(f"fuzz-{seed}")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    aliases = ubcheck_aliases(config)
+    aliases = ubcheck_aliases(config, args.asan_check)
 
     report: dict[str, Any] = {
         "seed": seed,
@@ -323,8 +397,9 @@ def main() -> int:
                 "flags": config[f"{key}_flags"],
                 "alias_of": aliases.get(name),
                 "gdb_probed": False,
+                "env": ASAN_ENV if name == ASAN_BUILD[0] else {},
             }
-            for name, key, _ in UBCHECK_BUILDS
+            for name, key, _ in ubcheck_builds(args.asan_check)
         },
         "stage": "generate",
     }
@@ -363,7 +438,7 @@ def main() -> int:
 
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
             builds = dict(pool.map(
-                build, [e for e in ALL_BUILDS if e[0] not in aliases]))
+                build, [e for e in builds_wanted if e[0] not in aliases]))
         for name, source in aliases.items():
             builds[name] = dict(builds[source], alias_of=source)
         report["builds"] = builds
@@ -383,16 +458,18 @@ def main() -> int:
             out = tmp_path / f"{name}.run.json"
             cmd = [sys.executable, str(RUN_KERNEL), str(tmp_path / f"{name}.out"),
                    "--timeout", str(args.run_timeout), "-o", str(out)]
-            record = run_step(cmd, args.run_timeout * 2 + 60)
+            env = ASAN_ENV if name == ASAN_BUILD[0] else None
+            record = run_step(cmd, args.run_timeout * 2 + 60, env=env)
             kernel_report = read_json(out)
             record["report"] = kernel_report
             # run_kernel.py exits 0 even when the kernel itself died — it only
             # fails on a cross-thread CRC mismatch, and otherwise just records
-            # the child's status in the report. A kernel killed on its own
-            # timeout (-9) is the case that matters: its print list is truncated
-            # at an arbitrary point and its CRC is null, so treating the run as
-            # successful would feed a half-finished sample to the gdb stage and
-            # to whatever compares the outputs afterwards.
+            # the child's status in the report. Everything this safeguard exists
+            # to catch shows up there and nowhere else: a UBSan trap (the driver
+            # exits 1 after HIP_CHECK sees the queue exception), an ASan abort,
+            # and a kernel killed on its own timeout (-9), whose print list is
+            # truncated at an arbitrary point and would otherwise be compared
+            # against the other variants as if it were complete.
             kernel_exit = (kernel_report or {}).get("exit_code")
             record["kernel_exit_code"] = kernel_exit
             if record["ok"] and kernel_exit != 0:
@@ -405,7 +482,7 @@ def main() -> int:
 
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
             runs = dict(pool.map(
-                run_one, [n for n, _, _ in ALL_BUILDS if n not in aliases]))
+                run_one, [n for n, _, _ in builds_wanted if n not in aliases]))
         for name, source in aliases.items():
             runs[name] = dict(runs[source], alias_of=source)
         report["runs"] = runs
