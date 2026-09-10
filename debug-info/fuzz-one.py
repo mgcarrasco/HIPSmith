@@ -6,6 +6,16 @@ derives a "reference" configuration from it by turning off instruction
 referencing. Both are built in the three PRINT modes, run, and probed under
 ROCgdb; the outputs are collected into a single JSON report.
 
+Alongside those six, the target is rebuilt in printf mode three more times with
+its optimisation level replaced by -O0, by -O3, and by -O0 plus trapping UBSan.
+These UB-check variants are built and run like any other, but are not
+gdb-probed: if they do not all print what target.printf printed, the kernel has
+undefined behaviour or has been miscompiled and is not a trustworthy debug-info
+sample. This script does not make that comparison — it records the outputs and
+leaves the judgement to whatever reads the report — but it does hold the
+variants to the same bar as every other build, so a UB-check build or run that
+fails ends the iteration.
+
 The generated source and the seed that produced it are kept in the output
 directory, so the binaries can be deleted: any finding is reproducible from
 `fuzz-one.py --seed <seed>`.
@@ -48,8 +58,12 @@ OPT_LEVELS = ["-O0", "-O1", "-O2", "-O3"]
 # Turning instruction referencing off is what makes a build the reference.
 REFERENCE_ONLY = ["-mllvm", "-experimental-debug-variable-locations=false"]
 
+# Trapping rather than diagnosing: there is no UBSan runtime for device code,
+# so a violation aborts the kernel and the run stage records the failure.
+UBSAN_ONLY = ["-fsanitize=undefined", "-fsanitize-trap=all"]
+
 # (name, configuration, extra build_kernel.py flags)
-BUILDS = [
+DI_BUILDS = [
     ("target.printf", "target", []),
     ("target.noop", "target", ["--print-noop"]),
     ("target.escape", "target", ["--print-escape"]),
@@ -57,6 +71,18 @@ BUILDS = [
     ("reference.noop", "reference", ["--print-noop"]),
     ("reference.escape", "reference", ["--print-escape"]),
 ]
+
+# Printf-mode rebuilds of the target at pinned optimisation levels, used to tell
+# a real debug-info divergence from one that only exists because the kernel has
+# UB. Always printf mode and never gdb-probed: their whole purpose is to be
+# value-comparable against target.printf.
+UBCHECK_BUILDS = [
+    ("ubcheck.O0", "ubcheck_O0", []),
+    ("ubcheck.O3", "ubcheck_O3", []),
+    ("ubcheck.ubsan", "ubcheck_ubsan", []),
+]
+
+ALL_BUILDS = DI_BUILDS + UBCHECK_BUILDS
 
 EXIT_OK = 0
 EXIT_GEN = 2
@@ -93,8 +119,9 @@ def parse_args() -> argparse.Namespace:
                         help="Timeout for each kernel run and each gdb probe")
     parser.add_argument("--offload-arch", default="native",
                         help="Value for --offload-arch (default: native)")
-    parser.add_argument("--jobs", type=int, default=6,
-                        help="Parallel builds, runs and gdb probes (default: 6)")
+    parser.add_argument("--jobs", type=int, default=9,
+                        help="Parallel builds, runs and gdb probes (default: 9, "
+                             "one per build variant)")
     parser.add_argument("--seed", type=int,
                         help="Reproduce a previous iteration")
     parser.add_argument("--out-dir", type=Path,
@@ -108,17 +135,23 @@ def parse_args() -> argparse.Namespace:
 
 
 def pick_config(rng: random.Random, offload_arch: str) -> dict[str, Any]:
-    """Choose the target configuration, then derive the reference from it."""
+    """Choose the target configuration, then derive the reference and the
+    UB-check configurations from it."""
     opt = rng.choice(OPT_LEVELS)
     global_isel = rng.choice([False, True])
     extend_liveness = rng.choice([False, True])
 
-    target = [opt, f"--offload-arch={offload_arch}"]
+    # Everything the target is built with except its optimisation level. The
+    # UB-check variants pin their own -O onto this same base, so they differ
+    # from the target in optimisation alone.
+    base = [f"--offload-arch={offload_arch}"]
     if global_isel:
         # The driver rejects a bare -global-isel=true; it is an LLVM option.
-        target += ["-mllvm", "-global-isel=true"]
+        base += ["-mllvm", "-global-isel=true"]
     if extend_liveness:
-        target += ["-fextend-variable-liveness=all"]
+        base += ["-fextend-variable-liveness=all"]
+
+    target = [opt] + base
 
     return {
         "opt": opt,
@@ -127,6 +160,25 @@ def pick_config(rng: random.Random, offload_arch: str) -> dict[str, Any]:
         "offload_arch": offload_arch,
         "target_flags": target,
         "reference_flags": target + REFERENCE_ONLY,
+        "ubcheck_O0_flags": ["-O0"] + base,
+        "ubcheck_O3_flags": ["-O3"] + base,
+        "ubcheck_ubsan_flags": ["-O0"] + base + UBSAN_ONLY,
+    }
+
+
+def ubcheck_aliases(config: dict[str, Any]) -> dict[str, str]:
+    """Map each UB-check variant that is already the target build onto it.
+
+    When the target's own optimisation level is -O0 or -O3 the corresponding
+    variant would compile the same source with the same flags in the same print
+    mode, so it is built and run once and reported under both names. Callers
+    still find all three UB-check entries in the report; the duplicate carries
+    an `alias_of` naming what it was copied from.
+    """
+    return {
+        name: "target.printf"
+        for name, key, _ in UBCHECK_BUILDS
+        if config[f"{key}_flags"] == config["target_flags"]
     }
 
 
@@ -243,11 +295,24 @@ def main() -> int:
     out_dir = (args.out_dir or Path(f"fuzz-{seed}")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    aliases = ubcheck_aliases(config)
+
     report: dict[str, Any] = {
         "seed": seed,
         "gen_seed": gen_seed,
         "source_dir": str(out_dir),
         "config": config,
+        # Stated up front so a reader knows which entries under builds/runs are
+        # UB-check variants without having to recognise their names, and which
+        # of them are copies of target.printf rather than separate compilations.
+        "ubcheck": {
+            name: {
+                "flags": config[f"{key}_flags"],
+                "alias_of": aliases.get(name),
+                "gdb_probed": False,
+            }
+            for name, key, _ in UBCHECK_BUILDS
+        },
         "stage": "generate",
     }
 
@@ -284,9 +349,16 @@ def main() -> int:
             return name, run_step(cmd, args.build_timeout)
 
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            builds = dict(pool.map(build, BUILDS))
+            builds = dict(pool.map(
+                build, [e for e in ALL_BUILDS if e[0] not in aliases]))
+        for name, source in aliases.items():
+            builds[name] = dict(builds[source], alias_of=source)
         report["builds"] = builds
 
+        # A UB-check variant that will not build leaves the sample unvetted, so
+        # it stops the iteration exactly like a debug-info build failure. -O0
+        # strains both the backend and the scratch-frame limit, so this is not a
+        # rare path.
         if any(not rec["ok"] for rec in builds.values()):
             emit(report, out_dir, args.json)
             return EXIT_BUILD
@@ -319,10 +391,16 @@ def main() -> int:
             return name, record
 
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            runs = dict(pool.map(run_one, [n for n, _, _ in BUILDS]))
+            runs = dict(pool.map(
+                run_one, [n for n, _, _ in ALL_BUILDS if n not in aliases]))
+        for name, source in aliases.items():
+            runs[name] = dict(runs[source], alias_of=source)
         report["runs"] = runs
 
-        # run-gdb only makes sense once every kernel has run cleanly.
+        # run-gdb only makes sense once every kernel has run cleanly. That
+        # includes the UB-check variants: a trapping UBSan build or an -O0
+        # rebuild that faults has shown the sample cannot be trusted, and there
+        # is nothing to learn from probing its debug info.
         if any(not rec["ok"] for rec in runs.values()):
             emit(report, out_dir, args.json)
             return EXIT_RUN
@@ -340,7 +418,7 @@ def main() -> int:
             return name, record
 
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            gdb = dict(pool.map(gdb_one, [n for n, _, _ in BUILDS]))
+            gdb = dict(pool.map(gdb_one, [n for n, _, _ in DI_BUILDS]))
         report["gdb"] = gdb
 
         gdb_failed = any(not rec["ok"] for rec in gdb.values())

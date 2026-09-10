@@ -2,9 +2,12 @@
 """Run many fuzz-one.py iterations in parallel, continuously, and collect a dataset.
 
 Each iteration is an independent `fuzz-one.py` subprocess: generate a random kernel,
-build it 6 ways, run each, gdb-probe each. This script only orchestrates that — it does
-not judge whether an iteration is "interesting" beyond fuzz-one.py's own mechanical exit
-code (0 ok, 2 generate failed, 3 build failed, 4 run failed, 5 gdb probe failed). Every
+build it 9 ways, run each, and gdb-probe the 6 debug-info builds among them (the other
+3 are UB-check rebuilds of target.printf at pinned optimisation levels). This script
+only orchestrates that — it does not judge whether an iteration is "interesting" beyond
+fuzz-one.py's own mechanical exit code (0 ok, 2 generate failed, 3 build failed, 4 run
+failed, 5 gdb probe failed). The UB-check builds count towards codes 3 and 4 like any
+other build. Every
 iteration's full report lives at `<run-dir>/out/fuzz-one.json`; `campaign.json` is a
 live, lightweight index over all of them (seed, exit code, duration, directory), kept
 up to date after every completed iteration so it can be read at any time, including
@@ -42,10 +45,14 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parent
 FUZZ_ONE = SCRIPTS / "fuzz-one.py"
 
-# fuzz-one.py builds target/reference x printf/noop/escape, and runs and
-# gdb-probes each of them, so every one of its three parallel stages has this
-# many items to get through.
-BUILD_VARIANTS = 6
+# fuzz-one.py builds target/reference x printf/noop/escape plus three UB-check
+# rebuilds of target.printf. It runs all of them, but gdb-probes only the six
+# debug-info builds, so its build and run stages have more items to get through
+# than its gdb stage.
+DI_VARIANTS = 6
+UBCHECK_VARIANTS = 3
+BUILD_VARIANTS = DI_VARIANTS + UBCHECK_VARIANTS
+GDB_VARIANTS = DI_VARIANTS
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,9 +72,9 @@ def parse_args() -> argparse.Namespace:
                         metavar="SECONDS",
                         help="Generation timeout inside each iteration "
                              "(default: 30)")
-    parser.add_argument("--build-timeout", type=float, default=30.0,
+    parser.add_argument("--build-timeout", type=float, default=45.0,
                         metavar="SECONDS",
-                        help="Per-build timeout inside each iteration (default: 30)")
+                        help="Per-build timeout inside each iteration (default: 45)")
     parser.add_argument("--run-timeout", type=float, default=30.0,
                         metavar="SECONDS",
                         help="Per-run and per-gdb-probe timeout inside each "
@@ -76,11 +83,11 @@ def parse_args() -> argparse.Namespace:
                         help="Value for --offload-arch (default: native)")
     parser.add_argument("--workers", type=int, default=12,
                         help="Concurrent fuzz-one.py subprocesses (default: 12)")
-    parser.add_argument("--inner-jobs", type=int, default=6,
-                        help="Each fuzz-one.py's own --jobs (default: 6). "
-                             "workers * inner-jobs concurrent build/run/gdb workers "
-                             "contend for the GPU; lower this pair if contention "
-                             "produces spurious timeouts.")
+    parser.add_argument("--inner-jobs", type=int, default=9,
+                        help="Each fuzz-one.py's own --jobs (default: 9, one per "
+                             "build variant). workers * inner-jobs concurrent "
+                             "build/run/gdb workers contend for the GPU; lower this "
+                             "pair if contention produces spurious timeouts.")
     parser.add_argument("--iterations", type=int,
                         help="Stop after this many total iterations")
     parser.add_argument("--duration", type=float, metavar="SECONDS",
@@ -91,8 +98,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iteration-timeout", type=float, metavar="SECONDS",
                         help="Hard per-iteration watchdog, independent of "
                              "fuzz-one.py's own internal timeouts (default: "
-                             "generate-timeout + ceil(6 / inner-jobs) * "
-                             "(build-timeout + 2 * run-timeout) + 60)")
+                             "generate-timeout + ceil(9 / inner-jobs) * "
+                             "(build-timeout + run-timeout) + ceil(6 / inner-jobs) * "
+                             "run-timeout + 60)")
     parser.add_argument("-o", "--summary", type=Path,
                         help="Path to the live campaign index "
                              "(default: <out-dir>/campaign.json)")
@@ -188,15 +196,17 @@ def main() -> int:
 
     iteration_timeout = args.iteration_timeout
     if iteration_timeout is None:
-        # Each of the build, run and gdb stages pushes its BUILD_VARIANTS items
-        # through a pool of --inner-jobs, so each takes that many rounds;
-        # generation is a single step. Worst case every step in every round hits
-        # its own timeout, then a minute of slack for process spawn, temp-dir
-        # cleanup and report writes.
-        rounds = math.ceil(BUILD_VARIANTS / args.inner_jobs)
+        # The build and run stages push BUILD_VARIANTS items through a pool of
+        # --inner-jobs and the gdb stage pushes GDB_VARIANTS, so each takes that
+        # many rounds; generation is a single step. Worst case every step in
+        # every round hits its own timeout, then a minute of slack for process
+        # spawn, temp-dir cleanup and report writes.
+        build_rounds = math.ceil(BUILD_VARIANTS / args.inner_jobs)
+        gdb_rounds = math.ceil(GDB_VARIANTS / args.inner_jobs)
         iteration_timeout = (args.generate_timeout
-                             + rounds * (args.build_timeout
-                                         + 2 * args.run_timeout)
+                             + build_rounds * (args.build_timeout
+                                               + args.run_timeout)
+                             + gdb_rounds * args.run_timeout
                              + 60)
 
     print(f"out-dir: {out_dir}", file=sys.stderr)
