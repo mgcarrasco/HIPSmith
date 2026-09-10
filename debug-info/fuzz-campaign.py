@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import subprocess
@@ -40,6 +41,11 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 FUZZ_ONE = SCRIPTS / "fuzz-one.py"
+
+# fuzz-one.py builds target/reference x printf/noop/escape, and runs and
+# gdb-probes each of them, so every one of its three parallel stages has this
+# many items to get through.
+BUILD_VARIANTS = 6
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,7 +91,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iteration-timeout", type=float, metavar="SECONDS",
                         help="Hard per-iteration watchdog, independent of "
                              "fuzz-one.py's own internal timeouts (default: "
-                             "build-timeout + 12 * run-timeout + 60)")
+                             "generate-timeout + ceil(6 / inner-jobs) * "
+                             "(build-timeout + 2 * run-timeout) + 60)")
     parser.add_argument("-o", "--summary", type=Path,
                         help="Path to the live campaign index "
                              "(default: <out-dir>/campaign.json)")
@@ -168,6 +175,12 @@ def main() -> int:
     if not args.hipsmith.is_file():
         print(f"error: {args.hipsmith} is not a file", file=sys.stderr)
         return 1
+    if args.workers < 1:
+        print("error: --workers must be at least 1", file=sys.stderr)
+        return 1
+    if args.inner_jobs < 1:
+        print("error: --inner-jobs must be at least 1", file=sys.stderr)
+        return 1
 
     out_dir = args.out_dir or Path(f"fuzz-campaign-{datetime.now():%Y%m%dT%H%M%S}")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -175,13 +188,23 @@ def main() -> int:
 
     iteration_timeout = args.iteration_timeout
     if iteration_timeout is None:
-        iteration_timeout = args.build_timeout + 12 * args.run_timeout + 60
+        # Each of the build, run and gdb stages pushes its BUILD_VARIANTS items
+        # through a pool of --inner-jobs, so each takes that many rounds;
+        # generation is a single step. Worst case every step in every round hits
+        # its own timeout, then a minute of slack for process spawn, temp-dir
+        # cleanup and report writes.
+        rounds = math.ceil(BUILD_VARIANTS / args.inner_jobs)
+        iteration_timeout = (args.generate_timeout
+                             + rounds * (args.build_timeout
+                                         + 2 * args.run_timeout)
+                             + 60)
 
     print(f"out-dir: {out_dir}", file=sys.stderr)
     print(f"summary: {summary_path}", file=sys.stderr)
     print(f"workers: {args.workers}  inner-jobs: {args.inner_jobs}  "
           f"({args.workers * args.inner_jobs} concurrent build/run/gdb workers)",
           file=sys.stderr)
+    print(f"watchdog: {iteration_timeout:g}s per iteration", file=sys.stderr)
 
     started_at = datetime.now().isoformat(timespec="seconds")
     start_perf = time.perf_counter()
