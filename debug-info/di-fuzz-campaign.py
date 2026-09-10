@@ -10,10 +10,10 @@ live, lightweight index over all of them (seed, exit code, duration, directory),
 up to date after every completed iteration so it can be read at any time, including
 mid-run or after an interrupt.
 
-  ./fuzz-campaign.py --amdclang .../amdclang++ --rocgdb .../rocgdb \\
+  ./di-fuzz-campaign.py --amdclang .../amdclang++ --rocgdb .../rocgdb \\
       --hipsmith build-argc/HIPSmith --iterations 100
 
-  ./fuzz-campaign.py --amdclang ... --rocgdb ... --hipsmith ...   # runs until Ctrl-C
+  ./di-fuzz-campaign.py --amdclang ... --rocgdb ... --hipsmith ...   # runs until Ctrl-C
 
 Ctrl-C once: stop submitting new iterations, let in-flight ones finish and get
 recorded. Ctrl-C twice: also kill in-flight fuzz-one.py subprocesses immediately.

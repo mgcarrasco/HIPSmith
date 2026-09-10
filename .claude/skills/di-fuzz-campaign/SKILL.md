@@ -10,7 +10,7 @@ below are relative to the HIPSmith repository root; run the commands from there.
 
 Three things must be in place before a campaign runs: a **ROCm toolchain** (supplying
 `amdclang++` and `rocgdb`), a **HIPSmith binary**, and a **stop condition**. Resolve
-each in order, then run `debug-info/fuzz-campaign.py`.
+each in order, then run `debug-info/di-fuzz-campaign.py`.
 
 Ask the user only for what is genuinely ambiguous. If they said "fuzz for an hour" or
 "run 500 iterations", that is the stop condition — do not ask again.
@@ -73,7 +73,7 @@ generates.
 ## 3. Run the campaign
 
 ```bash
-debug-info/fuzz-campaign.py \
+debug-info/di-fuzz-campaign.py \
   --amdclang <toolchain>/bin/amdclang++ \
   --rocgdb   <toolchain>/bin/rocgdb \
   --hipsmith build-debug/HIPSmith \
