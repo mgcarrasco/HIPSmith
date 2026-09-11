@@ -175,6 +175,23 @@ def parse_args() -> argparse.Namespace:
         help="Copy the reduced HIP file here when C-Vise finishes successfully",
     )
     parser.add_argument(
+        "--print-mode",
+        choices=("printf", "noop", "escape"),
+        default="printf",
+        help="Pass through to the interestingness test: print mode for the "
+        "gdb binary (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--also-reduce",
+        dest="also_reduce",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="Companion file to reduce alongside the HIP file, e.g. "
+        "safe_math_macros.h (bare name resolved in --resource-dir, or a "
+        "path; repeatable)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Pass --debug to the interestingness test (keeps hipsmith-int-* dirs)",
@@ -348,6 +365,24 @@ def main() -> int:
         output = None
 
     shutil.copy2(hip_file, staged)
+
+    # Companions C-Vise reduces too. The interestingness test's stage_sources()
+    # searches the HIP file's own directory (C-Vise's per-test copy, holding
+    # these) before --resource-dir (the original, holding the untouched rest),
+    # so the reduced version wins without any change there.
+    also_reduce: list[str] = []
+    for name in args.also_reduce:
+        src = Path(name).expanduser()
+        if not src.is_file():
+            src = resource_dir / name
+        src = abs_existing_file(src, "--also-reduce")
+        if src.name == hip_file.name:
+            die(f"--also-reduce {name} collides with the HIP file")
+        if src.name in also_reduce:
+            die(f"--also-reduce {src.name} given twice")
+        shutil.copy2(src, work / src.name)
+        also_reduce.append(src.name)
+
     # C-Vise's forkserver binds AF_UNIX under TMPDIR/pymp-*/listener-*
     # (Linux cap 108 bytes). Keep TMPDIR in /tmp even if --work-dir is long.
     tmpdir = Path(tempfile.mkdtemp(prefix="hipsmith-cvise-tmp-", dir="/tmp"))
@@ -383,6 +418,7 @@ def main() -> int:
         wrapper_cmd.extend(["--ids", args.ids])
     if args.no_bit_equality:
         wrapper_cmd.append("--no-bit-equality")
+    wrapper_cmd.extend(["--print-mode", args.print_mode])
     if args.debug:
         wrapper_cmd.append("--debug")
     wrapper_cmd.append("--")
@@ -405,7 +441,7 @@ def main() -> int:
         cvise_cmd.append("--save-temps")
     if args.skip_initial_passes:
         cvise_cmd.append("--skip-initial-passes")
-    cvise_cmd.extend([str(wrapper), hip_file.name])
+    cvise_cmd.extend([str(wrapper), hip_file.name, *also_reduce])
 
     env = os.environ.copy()
     env["TMPDIR"] = str(tmpdir)
@@ -415,6 +451,8 @@ def main() -> int:
     print(f"original: {hip_real}", file=sys.stderr)
     print(f"work:     {work}", file=sys.stderr)
     print(f"reduced:  {staged}", file=sys.stderr)
+    for name in also_reduce:
+        print(f"          {work / name}", file=sys.stderr)
     print(f"tmpdir:   {tmpdir}", file=sys.stderr)
     print(f"cvise:    {shlex.join(cvise_cmd)}", file=sys.stderr)
 
@@ -423,6 +461,9 @@ def main() -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(staged, output)
         print(f"copied:   {output}", file=sys.stderr)
+        for name in also_reduce:
+            shutil.copy2(work / name, output.parent / name)
+            print(f"          {output.parent / name}", file=sys.stderr)
     return result.returncode
 
 

@@ -29,7 +29,12 @@ from typing import Any
 
 
 HERE = Path(__file__).resolve().parent
-COMPANIONS = ("HIP-driver.cpp", "HIPSmith.h", "safe_math_macros.h")
+COMPANIONS = (
+    "HIP-driver.cpp",
+    "HIPSmith.h",
+    "HIPSmithPrint.h",  # included by HIPSmith.h
+    "safe_math_macros.h",
+)
 COMMON_BUILD_FLAGS = (
     "-Werror=uninitialized",
     "-Werror=flexible-array-extensions",
@@ -139,6 +144,13 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory with HIP-driver.cpp / headers if they are not "
         "next to hip_file (C-Vise: the original repro directory)",
+    )
+    parser.add_argument(
+        "--print-mode",
+        choices=("printf", "noop", "escape"),
+        default="printf",
+        help="Print mode for binary C only; A/B/D stay printf so the run "
+        "oracle survives (default: %(default)s)",
     )
     parser.add_argument(
         "--debug",
@@ -412,6 +424,7 @@ def main() -> int:
             _log.write(f"crosscheck {crosscheck}")
             _log.write(f"ids {targeted}")
             _log.write(f"extra {extra}")
+            _log.write(f"print-mode {args.print_mode}")
             _log.write(f"offload-arch {args.offload_arch}")
 
         wall_started = time.perf_counter()
@@ -443,6 +456,8 @@ def main() -> int:
                 cmd.extend(["-I", inc])
             if with_g:
                 cmd.append("--debug")
+                if args.print_mode != "printf":
+                    cmd.append(f"--print-{args.print_mode}")
             cmd.append("--")
             cmd.extend(COMMON_BUILD_FLAGS)
             cmd.extend(flags)
