@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -19,13 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
-PRINT_SITE_RE = re.compile(
-    r"PRINT_(?:INT8|UINT8|INT16|UINT16|INT64|UINT64|INT|UINT)\("
-    r"(?P<expr>.+?), __LINE__, \"(?P<how>[^\"]*)\""
-    r"(?:, (?P<id>-?\d+))?"
-    r"\)"
-)
+from print_sites import parse_print_sites
 
 GDB_HELPER = r'''
 import gdb
@@ -166,34 +159,6 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.extra = extra
     return args
-
-
-def parse_print_sites(hip_file: Path) -> list[dict[str, Any]]:
-    sites: list[dict[str, Any]] = []
-    missing_id = 0
-    for line_no, raw in enumerate(hip_file.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-        for match in PRINT_SITE_RE.finditer(raw):
-            id_text = match.group("id")
-            if id_text is None:
-                missing_id += 1
-                continue
-            sites.append(
-                {
-                    "id": int(id_text),
-                    "line": line_no,
-                    "expr": match.group("expr").strip(),
-                    "how": match.group("how"),
-                }
-            )
-    if missing_id:
-        raise SystemExit(
-            f"error: {missing_id} PRINT_* macros in {hip_file} have no id; "
-            "need PRINT_TYPE(expr, __LINE__, \"how\", id)"
-        )
-    ids = [s["id"] for s in sites]
-    if len(ids) != len(set(ids)):
-        raise SystemExit(f"error: duplicate PRINT ids in {hip_file}")
-    return sites
 
 
 def main() -> int:

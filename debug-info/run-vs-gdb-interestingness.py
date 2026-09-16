@@ -27,6 +27,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from print_sites import check_prints_preserved
+
 
 HERE = Path(__file__).resolve().parent
 COMPANIONS = (
@@ -151,6 +153,18 @@ def parse_args() -> argparse.Namespace:
         default="printf",
         help="Print mode for binary C only; A/B/D stay printf so the run "
         "oracle survives (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--require-original-prints",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require each targeted PRINT_* in hip_file to match --original-hip "
+        "(KIND, expr, how, id; whitespace ignored). On by default.",
+    )
+    parser.add_argument(
+        "--original-hip",
+        type=Path,
+        help="Unreduced HIP file (required unless --no-require-original-prints)",
     )
     parser.add_argument(
         "--debug",
@@ -381,12 +395,31 @@ def main() -> int:
     if not hip_file.is_file():
         die(f"no such file: {hip_file}")
     check_required_anywhere_lines(hip_file)
-    compiler = existing_exe(args.compiler)
-    if not compiler.is_file() or not os.access(compiler, os.X_OK):
-        die(f"compiler is not executable: {compiler}")
     crosscheck = args.crosscheck.resolve()
     if not crosscheck.is_file():
         die(f"no such file: {crosscheck}")
+
+    targeted = parse_ids(args.ids, initial_print_ids(crosscheck))
+    if args.require_original_prints:
+        if args.original_hip is None:
+            die("--original-hip is required unless --no-require-original-prints")
+        original_hip = args.original_hip.resolve()
+        if not original_hip.is_file():
+            die(f"no such file: {original_hip}")
+        try:
+            reason = check_prints_preserved(
+                original_hip.read_text(encoding="utf-8", errors="replace"),
+                hip_file.read_text(encoding="utf-8", errors="replace"),
+                targeted,
+            )
+        except ValueError as exc:
+            die(str(exc))
+        if reason is not None:
+            fail(reason)
+
+    compiler = existing_exe(args.compiler)
+    if not compiler.is_file() or not os.access(compiler, os.X_OK):
+        die(f"compiler is not executable: {compiler}")
     rocgdb = existing_exe(args.rocgdb) if args.rocgdb else existing_exe(compiler.parent / "rocgdb")
     if not rocgdb.is_file() or not os.access(rocgdb, os.X_OK):
         die(f"rocgdb is not executable: {rocgdb}")
@@ -394,7 +427,6 @@ def main() -> int:
     if timeout_bin is None:
         die("timeout(1) not found on PATH")
 
-    targeted = parse_ids(args.ids, initial_print_ids(crosscheck))
     resource_dir = args.resource_dir.resolve() if args.resource_dir else None
     env = toolchain_env(compiler)
     extra = list(args.extra)
@@ -425,6 +457,9 @@ def main() -> int:
             _log.write(f"ids {targeted}")
             _log.write(f"extra {extra}")
             _log.write(f"print-mode {args.print_mode}")
+            _log.write(f"require-original-prints {args.require_original_prints}")
+            if args.original_hip is not None:
+                _log.write(f"original-hip {args.original_hip.resolve()}")
             _log.write(f"offload-arch {args.offload_arch}")
 
         wall_started = time.perf_counter()

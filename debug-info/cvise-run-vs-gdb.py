@@ -182,6 +182,13 @@ def parse_args() -> argparse.Namespace:
         "gdb binary (default: %(default)s)",
     )
     parser.add_argument(
+        "--require-original-prints",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require targeted PRINT_* calls to match the original HIP file "
+        "(KIND, expr, how, id; whitespace ignored). On by default.",
+    )
+    parser.add_argument(
         "--also-reduce",
         dest="also_reduce",
         action="append",
@@ -419,6 +426,10 @@ def main() -> int:
     if args.no_bit_equality:
         wrapper_cmd.append("--no-bit-equality")
     wrapper_cmd.extend(["--print-mode", args.print_mode])
+    if args.require_original_prints:
+        wrapper_cmd.extend(["--original-hip", str(hip_real)])
+    else:
+        wrapper_cmd.append("--no-require-original-prints")
     if args.debug:
         wrapper_cmd.append("--debug")
     wrapper_cmd.append("--")
