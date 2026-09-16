@@ -15,8 +15,11 @@ no_line_debug_info, not_reached -- as three separate defects.
 ROCgdb breakpoints disable after one hit, so comparisons use the first
 execution of each print id. Values compare as bit patterns of width 8 * sizeof.
 
-Way 2 assumes ROCgdb's stop PC is at or after the volatile load; run-gdb.py
-checks only the stopped line, not the position within it.
+Incorrectness uses gdb_print from the first file:line stop only.
+
+Way 2 optimized_out requires that run-gdb.py found no concrete location on any
+later PC of the same source line (located_on_line is false). A later concrete
+print, or a walk that could not be performed, is not way 2.
 """
 
 from __future__ import annotations
@@ -235,11 +238,30 @@ def _site(record: dict[str, Any] | None, run_rec: dict[str, Any],
 
 
 def _observed(record: dict[str, Any] | None) -> dict[str, Any]:
-    return {
+    observed = {
         "gdb_status": record.get("status") if record else "not_reached",
         "gdb_value": gdb_value(record.get("gdb_print")) if record else None,
         "stopped_line": record.get("stopped_line") if record else None,
     }
+    if record is not None and "located_on_line" in record:
+        observed["located_on_line"] = record.get("located_on_line")
+    return observed
+
+
+def way2_missing(record: dict[str, Any] | None) -> str | None:
+    """Missing kind that is sound for way 2, or None if way 2 must not fire.
+
+    optimized_out at the first PC of the line is only a finding when the line
+    walk ran and no later PC of that line printed a concrete value
+    (located_on_line is false). True means a later PC located it; unset means
+    the walk did not run (fail closed).
+    """
+    missing = missing_kind(record)
+    if missing != MISSING_OPTIMIZED_OUT:
+        return missing
+    if record is not None and record.get("located_on_line") is False:
+        return MISSING_OPTIMIZED_OUT
+    return None
 
 
 def classify(report: dict[str, Any]) -> dict[str, Any]:
@@ -324,10 +346,11 @@ def classify(report: dict[str, Any]) -> dict[str, Any]:
                     "reference_build": reference_build,
                     "reference_missing": reference_missing})
 
-        # way 2: escape mode is a volatile load, so the value provably exists.
-        # Independent of way 1; both may fire on one site.
+        # way 2: escape mode is a volatile load, so the value provably exists
+        # somewhere on the PRINT line. Independent of way 1; both may fire.
+        # Incorrectness still uses only the first-stop gdb_print.
         escape = probe(gdb, "target.escape", print_id)
-        escape_missing = missing_kind(escape)
+        escape_missing = way2_missing(escape)
         if escape_missing is not None:
             findings.append({
                 "kind": f"{WAY2}.{escape_missing}", "build": "target.escape",
