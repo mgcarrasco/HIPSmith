@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 
-def parse_args() -> argparse.Namespace:
+def parse_build_argv(argv: list[str]) -> argparse.Namespace:
+    """Parse ``build_kernel.py`` arguments, including flags after ``--``."""
     parser = argparse.ArgumentParser(
         description=(
             "Compile HIPProg.hip with the HIP-driver.cpp next to it. "
@@ -60,7 +61,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Pass -g",
     )
-    argv = sys.argv[1:]
     extra: list[str] = []
     if "--" in argv:
         idx = argv.index("--")
@@ -69,6 +69,58 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.extra = extra
     return args
+
+
+def parse_args() -> argparse.Namespace:
+    return parse_build_argv(sys.argv[1:])
+
+
+def recorded_argv(cmd: list[str]) -> list[str]:
+    """Strip the python interpreter and this script from a recorded command."""
+    i = 0
+    if cmd and Path(cmd[0]).name.startswith("python"):
+        i = 1
+    if i < len(cmd) and Path(cmd[i]).name == "build_kernel.py":
+        i += 1
+    return cmd[i:]
+
+
+def compile_argv(
+    compiler: str | Path,
+    hip_file: Path,
+    include_dirs: list[str | Path],
+    extra: list[str],
+    output: Path,
+    *,
+    debug: bool = False,
+    print_noop: bool = False,
+    print_escape: bool = False,
+) -> list[str]:
+    """Return the amdclang++ argv used for a HIPSmith kernel link."""
+    hip_file = hip_file.resolve()
+    driver = hip_file.with_name("HIP-driver.cpp")
+    cmd = [str(compiler), "-x", "hip"]
+    if debug:
+        cmd.append("-g")
+    if print_noop:
+        cmd.append("-DHIPSMITH_PRINT_NOOP")
+    if print_escape:
+        cmd.append("-DHIPSMITH_PRINT_ESCAPE")
+    cmd.append("-DHIP_ENABLE_EXTRA_WARP_SYNC_TYPES=1")
+    cmd.extend(
+        [
+            "-fno-strict-aliasing",
+            "-Wno-c++11-narrowing",
+            "-Wno-unused-value",
+            "-fno-finite-loops",
+        ]
+    )
+    for include_dir in include_dirs:
+        cmd.extend(["-I", str(Path(include_dir).resolve())])
+    cmd.extend(["-I", str(hip_file.parent)])
+    cmd.extend([str(driver), str(hip_file), "-o", str(output)])
+    cmd.extend(extra)
+    return cmd
 
 
 def main() -> int:
@@ -90,27 +142,16 @@ def main() -> int:
         output = hip_file.with_suffix("")
     output = output.resolve()
 
-    cmd = [args.compiler, "-x", "hip"]
-    if args.debug:
-        cmd.append("-g")
-    if args.print_noop:
-        cmd.append("-DHIPSMITH_PRINT_NOOP")
-    if args.print_escape:
-        cmd.append("-DHIPSMITH_PRINT_ESCAPE")
-    cmd.append("-DHIP_ENABLE_EXTRA_WARP_SYNC_TYPES=1")
-    cmd.extend(
-        [
-            "-fno-strict-aliasing",
-            "-Wno-c++11-narrowing",
-            "-Wno-unused-value",
-            "-fno-finite-loops",
-        ]
+    cmd = compile_argv(
+        args.compiler,
+        hip_file,
+        args.include_dirs,
+        extra,
+        output,
+        debug=args.debug,
+        print_noop=args.print_noop,
+        print_escape=args.print_escape,
     )
-    for include_dir in args.include_dirs:
-        cmd.extend(["-I", str(Path(include_dir).resolve())])
-    cmd.extend(["-I", str(hip_file.parent)])
-    cmd.extend([str(driver), str(hip_file), "-o", str(output)])
-    cmd.extend(extra)
 
     print(" ".join(cmd))
     env = os.environ.copy()
