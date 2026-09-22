@@ -157,6 +157,28 @@ def check_id(
     current: dict[str, Any],
     bit_equality: bool,
 ) -> None:
+    if values_match(
+        initial.get("run_value"),
+        initial.get("reference_value"),
+        initial,
+        print_id,
+        "INITIAL reference",
+        bit_equality,
+    ):
+        if not values_match(
+            current.get("run_value"),
+            current.get("reference_value"),
+            current,
+            print_id,
+            "CURRENT reference",
+            bit_equality,
+        ):
+            fail(
+                f"id {print_id}: reference no longer recovers the run value "
+                f"({current.get('reference_value')!r} vs run "
+                f"{current.get('run_value')!r})"
+            )
+
     if initial.get("gdb_status") != current.get("gdb_status"):
         fail(
             f"id {print_id}: gdb_status {initial.get('gdb_status')!r} -> "
@@ -196,6 +218,15 @@ def check_id(
         fail(
             f"id {print_id}: non-concrete gdb_value "
             f"{initial.get('gdb_value')!r} -> {current.get('gdb_value')!r}"
+        )
+
+    if (
+        initial.get("located_on_line") is False
+        and current.get("located_on_line") is not False
+    ):
+        fail(
+            f"id {print_id}: located_on_line False -> "
+            f"{current.get('located_on_line')!r}"
         )
 
 

@@ -90,6 +90,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--run-timeout", default="120", metavar="DURATION")
     parser.add_argument("--gdb-timeout", default="600", metavar="DURATION")
+    parser.add_argument(
+        "--reference",
+        action="store_true",
+        help="Also build and gdb-probe E (C plus instruction-referencing off) "
+        "and pass --reference-gdb to crosscheck",
+    )
     argv = sys.argv[1:]
     extra: list[str] = []
     if "--" in argv:
@@ -147,6 +153,11 @@ def main() -> int:
 
     binary_a = build("A", False, ["-O0"])
     binary_c = build("C", True, list(args.extra))
+    binary_e = (
+        build("E", True, list(args.extra) + interestingness.REFERENCE_ONLY)
+        if args.reference
+        else None
+    )
 
     report_a = work / "A.json"
     run_step("run A", [py, str(HERE / "run_kernel.py"), str(binary_a),
@@ -157,14 +168,38 @@ def main() -> int:
     if not report.get("prints"):
         die("A produced no PRINT lines")
 
-    gdb_json = work / "C.gdb.json"
-    run_step("run-gdb C", [py, str(HERE / "run-gdb.py"), str(binary_c), str(hip_file),
-                           "--rocgdb", str(rocgdb), "--timeout", args.gdb_timeout,
-                           "-o", str(gdb_json)], env)
+    gdb_jobs: list[tuple[str, Path]] = [("C", binary_c)]
+    if binary_e is not None:
+        gdb_jobs.append(("E", binary_e))
 
-    run_step("crosscheck", [py, str(HERE / "crosscheck-run-vs-gdb.py"),
-                            str(report_a), str(gdb_json), "-o", str(output),
-                            "--unexpected", str(work / "gdb-only.json")], env)
+    def probe_gdb(spec: tuple[str, Path]) -> tuple[str, Path, subprocess.CompletedProcess[str]]:
+        name, binary = spec
+        gdb_json = work / f"{name}.gdb.json"
+        cmd = [py, str(HERE / "run-gdb.py"), str(binary), str(hip_file),
+               "--rocgdb", str(rocgdb), "--timeout", args.gdb_timeout,
+               "-o", str(gdb_json)]
+        print(f"[run-gdb {name}] {' '.join(cmd)}", file=sys.stderr)
+        proc = subprocess.run(cmd, env=env)
+        return name, gdb_json, proc
+
+    gdb_paths: dict[str, Path] = {}
+    for name, gdb_path, proc in interestingness.map_parallel(
+        len(gdb_jobs), gdb_jobs, probe_gdb
+    ):
+        if proc.returncode != 0:
+            die(f"run-gdb {name} exited {proc.returncode}")
+        if not gdb_path.is_file():
+            die(f"run-gdb {name} wrote no JSON")
+        gdb_paths[name] = gdb_path
+    gdb_json = gdb_paths["C"]
+    gdb_e = gdb_paths.get("E")
+
+    cross_cmd = [py, str(HERE / "crosscheck-run-vs-gdb.py"),
+                 str(report_a), str(gdb_json), "-o", str(output),
+                 "--unexpected", str(work / "gdb-only.json")]
+    if gdb_e is not None:
+        cross_cmd.extend(["--reference-gdb", str(gdb_e)])
+    run_step("crosscheck", cross_cmd, env)
 
     # Same notion of divergence test-run-vs-gdb.py uses: concrete gdb value
     # that does not bit-match the run value.

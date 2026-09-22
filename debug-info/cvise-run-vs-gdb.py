@@ -78,8 +78,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("JOBS", "4")),
         metavar="N",
-        help="Parallel compiles/runs among A–D inside one interestingness test "
-        "(default: 4)",
+        help="Parallel compiles, runs, and gdb probes among A–E inside one "
+        "interestingness test (default: 4; E is the optional reference build)",
     )
     parser.add_argument(
         "--n",
@@ -202,6 +202,11 @@ def parse_args() -> argparse.Namespace:
         "--debug",
         action="store_true",
         help="Pass --debug to the interestingness test (keeps hipsmith-int-* dirs)",
+    )
+    parser.add_argument(
+        "--reference",
+        action="store_true",
+        help="Pass --reference to the interestingness test (build E)",
     )
     argv = sys.argv[1:]
     extra: list[str] = []
@@ -344,10 +349,14 @@ def main() -> int:
     compile_s = timeout_seconds(args.compile_timeout)
     run_s = timeout_seconds(args.run_timeout)
     gdb_s = timeout_seconds(args.gdb_timeout)
-    compile_wall = compile_s * math.ceil(4 / args.jobs)
+    n_builds = 5 if args.reference else 4
+    n_gdb = 2 if args.reference else 1
+    compile_wall = compile_s * math.ceil(n_builds / args.jobs)
+    gdb_wall = gdb_s * math.ceil(n_gdb / args.jobs)
     cvise_timeout = args.cvise_timeout
     if cvise_timeout is None:
-        cvise_timeout = compile_wall + run_s + gdb_s + 30
+        # Serial device -fsyntax-only gate, then A–E, one run wave, gdb.
+        cvise_timeout = compile_s + compile_wall + run_s + gdb_wall + 30
     if cvise_timeout < 1:
         die("--cvise-timeout must be >= 1")
 
@@ -432,6 +441,8 @@ def main() -> int:
         wrapper_cmd.append("--no-require-original-prints")
     if args.debug:
         wrapper_cmd.append("--debug")
+    if args.reference:
+        wrapper_cmd.append("--reference")
     wrapper_cmd.append("--")
     wrapper_cmd.extend(args.extra)
 

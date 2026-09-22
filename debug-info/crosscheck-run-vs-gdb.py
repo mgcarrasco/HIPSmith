@@ -37,7 +37,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         required=True,
         help="JSON array of {print_id, run_value, gdb_value, gdb_status, "
-        "sizeof} for each print id exercised in run-kernel",
+        "located_on_line, reference_value, sizeof} for each print id "
+        "exercised in run-kernel",
     )
     parser.add_argument(
         "--unexpected",
@@ -45,6 +46,12 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="JSON array of print ids where run-gdb stopped (status printed) "
         "but run-kernel never executed that id",
+    )
+    parser.add_argument(
+        "--reference-gdb",
+        type=Path,
+        help="Optional run-gdb.py JSON for the reference build; adds "
+        "reference_value to each row",
     )
     return parser.parse_args()
 
@@ -98,6 +105,11 @@ def main() -> int:
     args = parse_args()
     run_first = first_run_prints(load_json(args.run_json))
     gdb_records = load_gdb_records(load_json(args.gdb_json))
+    reference_records = (
+        load_gdb_records(load_json(args.reference_gdb))
+        if args.reference_gdb is not None
+        else None
+    )
 
     exercised: list[dict[str, Any]] = []
     for print_id, run_rec in sorted(run_first.items()):
@@ -106,6 +118,8 @@ def main() -> int:
             "run_value": run_rec["value"],
             "gdb_value": None,
             "gdb_status": None,
+            "located_on_line": None,
+            "reference_value": None,
         }
         if "sizeof" in run_rec:
             row["sizeof"] = run_rec["sizeof"]
@@ -113,6 +127,11 @@ def main() -> int:
         if gdb_rec is not None:
             row["gdb_value"] = gdb_value(gdb_rec.get("gdb_print"))
             row["gdb_status"] = gdb_rec.get("status")
+            row["located_on_line"] = gdb_rec.get("located_on_line")
+        if reference_records is not None:
+            ref_rec = reference_records.get(print_id)
+            if ref_rec is not None:
+                row["reference_value"] = gdb_value(ref_rec.get("gdb_print"))
         exercised.append(row)
 
     unexpected: list[int] = []

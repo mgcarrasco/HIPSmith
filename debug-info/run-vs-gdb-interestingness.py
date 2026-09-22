@@ -8,8 +8,11 @@ files. Point that wrapper at this script and pass HIPProg.hip (usually
 the copy in cwd). Build artifacts go to a unique temp directory so
 parallel C-Vise workers cannot clash.
 
-Builds A–D in parallel, runs all four kernels in parallel, then gdb on C
-and compares C's gdb session against A's printf oracle.
+A device-only ``-fsyntax-only`` compile of the HIP TU runs first. Junk
+C-Vise variants exit before A–E. Builds A–D then run in parallel, then
+gdb-probes C against A's printf oracle. With --reference, also builds and
+runs E (C plus instruction-referencing off) and gdb-probes C and E in
+parallel.
 """
 
 from __future__ import annotations
@@ -27,15 +30,19 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from build_kernel import compile_argv
 from print_sites import check_prints_preserved
 
-
-HERE = Path(__file__).resolve().parent
 COMPANIONS = (
     "HIP-driver.cpp",
     "HIPSmith.h",
-    "HIPSmithPrint.h",  # included by HIPSmith.h
+    "HIPSmithPrint.h",  # included by HIPSmith.h; not inlined into HIPProg.hip
     "safe_math_macros.h",
+    "setup_hip_globals.h",  # extracted host setup; not reduced
 )
 COMMON_BUILD_FLAGS = (
     "-Werror=uninitialized",
@@ -49,6 +56,10 @@ COMMON_BUILD_FLAGS = (
     "-Werror=zero-length-array",
     "-fno-finite-loops",
 )
+
+# Same list as fuzz-one.py: turning instruction referencing off makes E the
+# reference build.
+REFERENCE_ONLY = ["-mllvm", "-experimental-debug-variable-locations=false"]
 
 # From hipfuzz interestingness/template_interesting.py — must survive C-Vise reduction.
 REQUIRED_ANYWHERE_LINES = (
@@ -100,7 +111,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         required=True,
         metavar="N",
-        help="Max parallel compiles/runs among A–D",
+        help="Max parallel compiles, runs, and gdb probes among A–E",
     )
     parser.add_argument(
         "--crosscheck",
@@ -151,8 +162,14 @@ def parse_args() -> argparse.Namespace:
         "--print-mode",
         choices=("printf", "noop", "escape"),
         default="printf",
-        help="Print mode for binary C only; A/B/D stay printf so the run "
-        "oracle survives (default: %(default)s)",
+        help="Print mode for binary C (and E if --reference); A/B/D stay "
+        "printf so the run oracle survives (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--reference",
+        action="store_true",
+        help="Also build E (C plus instruction-referencing off), run it, "
+        "gdb-probe C and E in parallel, and pass --reference-gdb to crosscheck",
     )
     parser.add_argument(
         "--require-original-prints",
@@ -327,6 +344,46 @@ def stage_sources(hip_file: Path, work: Path, resource_dir: Path | None) -> Path
     return staged
 
 
+def drop_dash_o(cmd: list[str]) -> list[str]:
+    """Remove ``-o PATH`` from an amdclang++ argv (syntax-only has no output)."""
+    out: list[str] = []
+    skip = False
+    for tok in cmd:
+        if skip:
+            skip = False
+            continue
+        if tok == "-o":
+            skip = True
+            continue
+        out.append(tok)
+    return out
+
+
+def device_syntax_only_cmd(
+    compiler: Path,
+    hip_file: Path,
+    include_dirs: list[str],
+    extra: list[str],
+    offload_arch: str,
+    print_mode: str,
+) -> list[str]:
+    """Device-side parse/sema of the same TUs as binary C, no host, no link."""
+    flags = [f for f in COMMON_BUILD_FLAGS if not f.startswith("-Wl,")]
+    flags.extend(extra)
+    flags.append(f"--offload-arch={offload_arch}")
+    flags.append("--offload-device-only")
+    cmd = compile_argv(
+        compiler,
+        hip_file,
+        include_dirs,
+        flags,
+        hip_file.with_name("syntax-only"),
+        print_noop=print_mode == "noop",
+        print_escape=print_mode == "escape",
+    )
+    return drop_dash_o(cmd) + ["-fsyntax-only"]
+
+
 def run_timeout(
     timeout_bin: str,
     duration: str,
@@ -457,12 +514,41 @@ def main() -> int:
             _log.write(f"ids {targeted}")
             _log.write(f"extra {extra}")
             _log.write(f"print-mode {args.print_mode}")
+            _log.write(f"reference {args.reference}")
             _log.write(f"require-original-prints {args.require_original_prints}")
             if args.original_hip is not None:
                 _log.write(f"original-hip {args.original_hip.resolve()}")
             _log.write(f"offload-arch {args.offload_arch}")
 
         wall_started = time.perf_counter()
+
+        syntax_cmd = device_syntax_only_cmd(
+            compiler,
+            staged_hip,
+            include_dirs,
+            extra,
+            args.offload_arch,
+            args.print_mode,
+        )
+        if _log is not None:
+            _log.write(
+                "device syntax-only: "
+                + cmdline([timeout_bin, "-s9", args.compile_timeout, *syntax_cmd])
+            )
+        syntax_started = time.perf_counter()
+        syntax_proc = run_timeout(
+            timeout_bin, args.compile_timeout, syntax_cmd, env
+        )
+        if _log is not None:
+            _log.write(
+                "device syntax-only finished in "
+                f"{time.perf_counter() - syntax_started:.2f}s "
+                f"exit {syntax_proc.returncode}"
+            )
+        if keep or syntax_proc.returncode != 0:
+            dump_proc("device syntax-only", syntax_proc)
+        if syntax_proc.returncode != 0:
+            fail(f"device syntax-only exited {syntax_proc.returncode}")
 
         builds = [
             ("A", False, ["-O0"]),
@@ -474,6 +560,9 @@ def main() -> int:
                 ["-O0", "-fsanitize=undefined", "-fsanitize-trap=all"],
             ),
         ]
+        if args.reference:
+            builds.append(("E", True, extra + REFERENCE_ONLY))
+        build_names = [name for name, _, _ in builds]
 
         def compile_one(spec: tuple[str, bool, list[str]]) -> tuple[str, Path, subprocess.CompletedProcess[str]]:
             name, with_g, flags = spec
@@ -553,7 +642,7 @@ def main() -> int:
             return name, report, proc
 
         run_started = time.perf_counter()
-        ran = map_parallel(args.jobs, ["A", "B", "C", "D"], run_one)
+        ran = map_parallel(args.jobs, build_names, run_one)
         if _log is not None:
             _log.write(
                 f"all runs finished in {time.perf_counter() - run_started:.2f}s wall"
@@ -578,7 +667,7 @@ def main() -> int:
             if _log is not None:
                 _log.write(f"kernel {name} crc={report['crc']} prints={len(report.get('prints') or [])}")
 
-        crcs = {name: reports[name]["crc"] for name in ("A", "B", "C", "D")}
+        crcs = {name: reports[name]["crc"] for name in build_names}
         if len(set(crcs.values())) != 1:
             fail(f"CRC mismatch: {crcs}")
         if _log is not None:
@@ -594,40 +683,57 @@ def main() -> int:
         if missing:
             fail(f"targeted print ids missing from A: {missing}")
 
-        gdb_json = work / "C.gdb.json"
-        gdb_cmd = [
-            py,
-            str(HERE / "run-gdb.py"),
-            str(binaries["C"]),
-            str(staged_hip),
-            "--rocgdb",
-            str(rocgdb),
-            "--timeout",
-            args.gdb_timeout,
-            "-o",
-            str(gdb_json),
-        ]
-        if _log is not None:
-            _log.write(f"run-gdb C: {cmdline(gdb_cmd)}")
+        def probe_gdb(name: str) -> tuple[str, Path, subprocess.CompletedProcess[str]]:
+            gdb_json = work / f"{name}.gdb.json"
+            gdb_cmd = [
+                py,
+                str(HERE / "run-gdb.py"),
+                str(binaries[name]),
+                str(staged_hip),
+                "--rocgdb",
+                str(rocgdb),
+                "--timeout",
+                args.gdb_timeout,
+                "-o",
+                str(gdb_json),
+            ]
+            if _log is not None:
+                _log.write(f"run-gdb {name}: {cmdline(gdb_cmd)}")
+            gdb_started = time.perf_counter()
+            gdb_proc = subprocess.run(
+                gdb_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+            if _log is not None:
+                _log.write(
+                    f"run-gdb {name} finished in "
+                    f"{time.perf_counter() - gdb_started:.2f}s "
+                    f"exit {gdb_proc.returncode}"
+                )
+            return name, gdb_json, gdb_proc
+
+        gdb_names = ["C", "E"] if args.reference else ["C"]
         gdb_started = time.perf_counter()
-        gdb_proc = subprocess.run(
-            gdb_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
+        gdb_probed = map_parallel(args.jobs, gdb_names, probe_gdb)
         if _log is not None:
             _log.write(
-                f"run-gdb C finished in {time.perf_counter() - gdb_started:.2f}s "
-                f"exit {gdb_proc.returncode}"
+                f"all gdb probes finished in "
+                f"{time.perf_counter() - gdb_started:.2f}s wall"
             )
-        if keep or gdb_proc.returncode != 0:
-            dump_proc("run-gdb C", gdb_proc)
-        if gdb_proc.returncode != 0:
-            fail(f"run-gdb C exited {gdb_proc.returncode}")
-        if not gdb_json.is_file():
-            fail("run-gdb C wrote no JSON")
+        gdb_jsons: dict[str, Path] = {}
+        for name, gdb_path, gdb_proc in gdb_probed:
+            if keep or gdb_proc.returncode != 0:
+                dump_proc(f"run-gdb {name}", gdb_proc)
+            if gdb_proc.returncode != 0:
+                fail(f"run-gdb {name} exited {gdb_proc.returncode}")
+            if not gdb_path.is_file():
+                fail(f"run-gdb {name} wrote no JSON")
+            gdb_jsons[name] = gdb_path
+        gdb_json = gdb_jsons["C"]
+        reference_gdb = gdb_jsons.get("E")
 
         current = work / "current.crosscheck.json"
         unexpected = work / "gdb-only.json"
@@ -641,6 +747,8 @@ def main() -> int:
             "--unexpected",
             str(unexpected),
         ]
+        if reference_gdb is not None:
+            cross_cmd.extend(["--reference-gdb", str(reference_gdb)])
         if _log is not None:
             _log.write(f"crosscheck: {cmdline(cross_cmd)}")
         cross_proc = subprocess.run(
