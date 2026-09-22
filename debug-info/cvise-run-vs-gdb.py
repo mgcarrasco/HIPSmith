@@ -76,19 +76,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--jobs",
         type=int,
-        default=int(os.environ.get("JOBS", "4")),
+        default=int(os.environ.get("JOBS", "5")),
         metavar="N",
         help="Parallel compiles, runs, and gdb probes among A–E inside one "
-        "interestingness test (default: 4; E is the optional reference build)",
+        "interestingness test (default: 5; E is the optional reference build)",
     )
     parser.add_argument(
         "--n",
         "-n",
         type=int,
-        default=8,
+        default=6,
         metavar="N",
         dest="cvise_jobs",
-        help="C-Vise parallel interestingness workers (default: 8)",
+        help="C-Vise parallel interestingness workers (default: 6)",
     )
     parser.add_argument(
         "--crosscheck",
@@ -130,7 +130,8 @@ def parse_args() -> argparse.Namespace:
         "--cvise",
         type=Path,
         required=True,
-        help="cvise executable (required)",
+        help="cvise executable, or a cvise checkout directory (uses "
+        ".venv/bin/python3 build/cvise-cli.py)",
     )
     parser.add_argument(
         "--clang-delta-std",
@@ -162,6 +163,11 @@ def parse_args() -> argparse.Namespace:
         "--skip-initial-passes",
         action="store_true",
         help="Pass --skip-initial-passes to C-Vise",
+    )
+    parser.add_argument(
+        "--pass-group-file",
+        type=Path,
+        help="JSON pass group forwarded as cvise --pass-group-file",
     )
     parser.add_argument(
         "--work-dir",
@@ -301,6 +307,19 @@ def abs_existing_dir(path: Path, what: str) -> Path:
 
 
 def cvise_invocation(path: Path) -> list[str]:
+    path = path.expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if path.is_dir():
+        python = path / ".venv" / "bin" / "python3"
+        cli = path / "build" / "cvise-cli.py"
+        if not python.is_file():
+            die(f"no cvise venv python: {python}")
+        if not os.access(python, os.X_OK):
+            die(f"cvise venv python is not executable: {python}")
+        if not cli.is_file():
+            die(f"no cvise CLI: {cli}")
+        return [str(python), str(cli)]
     cvise = abs_existing_file(path, "--cvise")
     if not os.access(cvise, os.X_OK):
         die(f"cvise is not executable: {cvise}")
@@ -463,6 +482,9 @@ def main() -> int:
         cvise_cmd.append("--save-temps")
     if args.skip_initial_passes:
         cvise_cmd.append("--skip-initial-passes")
+    if args.pass_group_file is not None:
+        pass_group_file = abs_existing_file(args.pass_group_file, "--pass-group-file")
+        cvise_cmd.append(f"--pass-group-file={pass_group_file}")
     cvise_cmd.extend([str(wrapper), hip_file.name, *also_reduce])
 
     env = os.environ.copy()
