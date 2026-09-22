@@ -195,18 +195,25 @@ def find_hipprog_device_opt(
     cmds: list[list[str]],
     main_name: str = "HIPProg.hip",
 ) -> int:
-    """Index of device LLVM cc1 (amdgcn, ``-x hip``, ``-emit-llvm-bc``)."""
+    """Index of device LLVM cc1 (``-fcuda-is-device``, ``-x hip``, ``-emit-llvm-bc``).
+
+    Device cc1 jobs are identified by ``-fcuda-is-device``, not by matching
+    ``amdgcn`` in ``-triple``: some nightlies emit architecture-versioned
+    device triples (e.g. ``amdgpu9.0a-amd-amdhsa``) instead of the classic
+    ``amdgcn-amd-amdhsa``, which a substring match on ``amdgcn`` misses.
+    """
     want = Path(main_name).name
     for i, cmd in enumerate(cmds):
         if "-cc1" not in cmd or "-emit-llvm-bc" not in cmd:
             continue
+        if "-fcuda-is-device" not in cmd:
+            continue
         try:
-            triple = cmd[cmd.index("-triple") + 1]
             name = cmd[cmd.index("-main-file-name") + 1]
             lang = cmd[cmd.index("-x") + 1]
         except ValueError:
             continue
-        if "amdgcn" in triple and Path(name).name == want and lang == "hip":
+        if Path(name).name == want and lang == "hip":
             return i
     raise SystemExit(f"cannot find {want} device LLVM cc1 in -### output")
 
