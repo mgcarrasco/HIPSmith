@@ -493,8 +493,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kind", help="oracle kind or incorrectness/missing")
     parser.add_argument("--id", type=int, help="PRINT id")
     parser.add_argument("--build", help="restrict to this target build")
-    parser.add_argument("--build-timeout", type=float, default=300.0)
-    parser.add_argument("--gdb-timeout", type=float, default=120.0)
+    parser.add_argument("--build-timeout", type=float, default=45.0)
+    parser.add_argument("--gdb-timeout", type=float, default=30.0)
     parser.add_argument(
         "--jobs",
         type=int,
