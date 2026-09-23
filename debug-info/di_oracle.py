@@ -9,17 +9,18 @@ and agreed, so a kernel-vs-ROCgdb disagreement can only come from debug info.
                   the reference build recovered it (way 1) or because escape
                   mode's volatile load must have materialised it (way 2)
 
-Both ways are split by how the value went missing -- optimized_out,
-no_line_debug_info, not_reached -- as three separate defects.
+Way 1 and way 2 are one kind each. The first-stop status stays on the gdb
+row and is not part of the kind.
 
 ROCgdb breakpoints disable after one hit, so comparisons use the first
 execution of each print id. Values compare as bit patterns of width 8 * sizeof.
 
 Incorrectness uses gdb_print from the first file:line stop only.
 
-Way 2 optimized_out requires that run-gdb.py found no concrete location on any
-later PC of the same source line (located_on_line is false). A later concrete
-print, or a walk that could not be performed, is not way 2.
+Way 2 fires only when the non-gdb target.printf run executed that id and
+target.escape has located_on_line false: a clean probe, and neither the
+file:line stop nor any walked PC printed a concrete integer. true and null
+suppress way 2. Way 1 does not consult located_on_line.
 """
 
 from __future__ import annotations
@@ -56,12 +57,8 @@ MISSING_NOT_REACHED = "not_reached"
 
 FINDING_KINDS = (
     INCORRECTNESS,
-    f"{WAY1}.{MISSING_OPTIMIZED_OUT}",
-    f"{WAY1}.{MISSING_NO_LINE_INFO}",
-    f"{WAY1}.{MISSING_NOT_REACHED}",
-    f"{WAY2}.{MISSING_OPTIMIZED_OUT}",
-    f"{WAY2}.{MISSING_NO_LINE_INFO}",
-    f"{WAY2}.{MISSING_NOT_REACHED}",
+    WAY1,
+    WAY2,
 )
 
 INFO_REFERENCE_INCORRECT = "info.reference_incorrect"
@@ -248,20 +245,9 @@ def _observed(record: dict[str, Any] | None) -> dict[str, Any]:
     return observed
 
 
-def way2_missing(record: dict[str, Any] | None) -> str | None:
-    """Missing kind that is sound for way 2, or None if way 2 must not fire.
-
-    optimized_out at the first PC of the line is only a finding when the line
-    walk ran and no later PC of that line printed a concrete value
-    (located_on_line is false). True means a later PC located it; unset means
-    the walk did not run (fail closed).
-    """
-    missing = missing_kind(record)
-    if missing != MISSING_OPTIMIZED_OUT:
-        return missing
-    if record is not None and record.get("located_on_line") is False:
-        return MISSING_OPTIMIZED_OUT
-    return None
+def way2_located(record: dict[str, Any] | None) -> bool:
+    """True when a clean probe never printed a concrete integer on the line."""
+    return record is not None and record.get("located_on_line") is False
 
 
 def classify(report: dict[str, Any]) -> dict[str, Any]:
@@ -327,7 +313,7 @@ def classify(report: dict[str, Any]) -> dict[str, Any]:
             elif reference_missing is None and values_match(
                     expected, gdb_value(reference["gdb_print"]), size):
                 findings.append({
-                    "kind": f"{WAY1}.{target_missing}", "build": target_build,
+                    "kind": WAY1, "build": target_build,
                     **site, **common, **_observed(target),
                     "reference_build": reference_build,
                     "reference_value": gdb_value(reference["gdb_print"])})
@@ -346,14 +332,12 @@ def classify(report: dict[str, Any]) -> dict[str, Any]:
                     "reference_build": reference_build,
                     "reference_missing": reference_missing})
 
-        # way 2: escape mode is a volatile load, so the value provably exists
-        # somewhere on the PRINT line. Independent of way 1; both may fire.
-        # Incorrectness still uses only the first-stop gdb_print.
+        # way 2: the kernel printf executed this id, and a clean escape probe
+        # never got a concrete print at the file:line stop or any walked PC.
         escape = probe(gdb, "target.escape", print_id)
-        escape_missing = way2_missing(escape)
-        if escape_missing is not None:
+        if way2_located(escape):
             findings.append({
-                "kind": f"{WAY2}.{escape_missing}", "build": "target.escape",
+                "kind": WAY2, "build": "target.escape",
                 **_site(escape, run_rec, print_id), **common, **_observed(escape)})
 
     for finding in findings:

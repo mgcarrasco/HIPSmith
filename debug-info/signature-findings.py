@@ -2,7 +2,7 @@
 """Map each oracle finding to a signature, then cluster duplicates.
 
 An input finding is one HIP kernel, one PRINT id, one target build, and the
-oracle's full kind (incorrectness, incompleteness.way2.optimized_out, …).
+oracle's full kind (incorrectness, incompleteness.way1, incompleteness.way2).
 The signature is ``{coarse_kind}|{pass}``: incompleteness subclasses become
 ``missing``, and ``pass`` is the OptBisect result from bisect-finding.py.
 

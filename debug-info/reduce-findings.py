@@ -32,15 +32,6 @@ INTERESTINGNESS = HERE / "run-vs-gdb-interestingness.py"
 PREPARE = HERE / "prepare-kernel.py"
 DEFAULT_RUNTIME = HERE.parent.parent / "HIPSmith" / "runtime"
 
-WAY2_STATUS = {
-    "incompleteness.way2.not_reached": "not_reached",
-    "incompleteness.way2.no_line_debug_info": "no_line_debug_info",
-}
-WAY1_STATUS = {
-    "incompleteness.way1.not_reached": "not_reached",
-    "incompleteness.way1.no_line_debug_info": "no_line_debug_info",
-}
-
 
 def load_sibling(filename: str) -> Any:
     path = HERE / filename
@@ -221,7 +212,7 @@ def unsound_reason(kind: str, rec: dict[str, Any], print_id: int) -> str | None:
             return f"id {print_id}: gdb_value bit-matches run_value"
         return None
 
-    if kind == "incompleteness.way2.optimized_out":
+    if kind == "incompleteness.way2" or kind.startswith("incompleteness.way2."):
         if rec.get("located_on_line") is not False:
             return (
                 f"id {print_id}: located_on_line is "
@@ -229,14 +220,7 @@ def unsound_reason(kind: str, rec: dict[str, Any], print_id: int) -> str | None:
             )
         return None
 
-    if kind in WAY2_STATUS:
-        want = WAY2_STATUS[kind]
-        got = rec.get("gdb_status")
-        if got != want:
-            return f"id {print_id}: gdb_status {got!r}, want {want!r}"
-        return None
-
-    if kind.startswith("incompleteness.way1"):
+    if kind == "incompleteness.way1" or kind.startswith("incompleteness.way1."):
         if not predicate.values_match(
             rec.get("run_value"), rec.get("reference_value"),
             rec, print_id, "initial reference", True,
@@ -246,21 +230,8 @@ def unsound_reason(kind: str, rec: dict[str, Any], print_id: int) -> str | None:
                 f"{rec.get('reference_value')!r} does not bit-match run "
                 f"{rec.get('run_value')!r}"
             )
-        suffix = kind.rsplit(".", 1)[-1]
-        if suffix == "optimized_out":
-            if rec.get("gdb_status") != "printed":
-                return (
-                    f"id {print_id}: gdb_status {rec.get('gdb_status')!r}, "
-                    "want 'printed'"
-                )
-            if predicate.is_concrete(rec.get("gdb_value")):
-                return f"id {print_id}: target gdb_value is concrete"
-            return None
-        want = WAY1_STATUS.get(kind)
-        if want is None:
-            return f"id {print_id}: unhandled way1 kind {kind}"
-        if rec.get("gdb_status") != want:
-            return f"id {print_id}: gdb_status {rec.get('gdb_status')!r}, want {want!r}"
+        if predicate.is_concrete(rec.get("gdb_value")):
+            return f"id {print_id}: target gdb_value is concrete"
         return None
 
     return f"id {print_id}: unhandled oracle_kind {kind}"

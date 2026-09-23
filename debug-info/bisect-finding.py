@@ -417,14 +417,6 @@ def printf_record(report: dict[str, Any], print_id: int) -> dict[str, Any]:
     raise SystemExit(f"print id {print_id} not in target.printf")
 
 
-def finding_suffix(kind: str) -> str:
-    if kind == oracle.INCORRECTNESS:
-        return ""
-    if kind.startswith(oracle.WAY1 + ".") or kind.startswith(oracle.WAY2 + "."):
-        return kind.split(".", 2)[2]
-    raise SystemExit(f"unsupported finding kind: {kind}")
-
-
 def finding_reproduces(
     finding: dict[str, Any],
     probe_rec: dict[str, Any] | None,
@@ -441,15 +433,11 @@ def finding_reproduces(
             sizeof,
         )
 
-    suffix = finding_suffix(kind)
-    if kind.startswith(oracle.WAY2):
-        if suffix == oracle.MISSING_OPTIMIZED_OUT:
-            return oracle.way2_missing(probe_rec) == oracle.MISSING_OPTIMIZED_OUT
-        return oracle.missing_kind(probe_rec) == suffix
+    if kind == oracle.WAY2 or kind.startswith(oracle.WAY2 + "."):
+        return oracle.way2_located(probe_rec)
 
-    if kind.startswith(oracle.WAY1):
-        target_missing = oracle.missing_kind(probe_rec)
-        if target_missing != suffix:
+    if kind == oracle.WAY1 or kind.startswith(oracle.WAY1 + "."):
+        if oracle.missing_kind(probe_rec) is None:
             return False
         ref_value = finding.get("reference_value")
         return ref_value is not None and oracle.values_match(

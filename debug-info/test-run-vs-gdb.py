@@ -179,12 +179,6 @@ def check_id(
                 f"{current.get('run_value')!r})"
             )
 
-    if initial.get("gdb_status") != current.get("gdb_status"):
-        fail(
-            f"id {print_id}: gdb_status {initial.get('gdb_status')!r} -> "
-            f"{current.get('gdb_status')!r}"
-        )
-
     initial_match = values_match(
         initial.get("run_value"),
         initial.get("gdb_value"),
