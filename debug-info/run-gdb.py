@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Stop ROCgdb at each normal breakpoint location of a PRINT line.
+"""Stop ROCgdb at PRINT line breakpoints and at loads in PRINT segments.
 
 Breakpoints are set on PRINT source lines. gdb_print is the first of those
-stops. located_on_line is separate: null until a clean probe finishes, true if
-any location of that breakpoint prints a concrete integer, false only when the
-probe finished with no concrete print. Each location is stopped once. A failed
-probe leaves null and the process exits non-zero.
+stops. located_on_line is separate: it is decided by every load inside each
+PRINT's DWARF column segments, which overapproximates the volatile read.
+true if any stopped load prints a concrete integer. false when the probe
+finished cleanly and none of the loads that stopped did, including when no
+load was found or every load went unexecuted. A failed probe leaves null
+and exits non-zero.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from print_load_pcs import LoadPcError, annotate_sites_with_loads
 from print_sites import parse_print_sites
 
 GDB_HELPER = r'''
@@ -34,6 +37,7 @@ RESULT_PATH = os.environ["PROBE_RESULT_JSON"]
 STATUS_PATH = os.environ["PROBE_STATUS_PATH"]
 HIP_BASENAME = os.environ["PROBE_HIP_BASENAME"]
 KERNEL = "hipsmith_kernel"
+KERNEL_ELF = int(os.environ["PROBE_KERNEL_ELF"], 0)
 
 CHAR_SUFFIX_RE = re.compile(r"^(.*\S)\s+'.*'$")
 GDB_VALUE_RE = re.compile(r"^[^=\n]*=\s*(.*)$", re.DOTALL)
@@ -46,10 +50,13 @@ STATE = {
     "exited": False,
     "stray": 0,
     "reason": None,
+    "slide": None,
 }
 
 LINE_BPS = []
+LOAD_BPS = []
 WANTED = {}
+LOAD_WANTED = {}
 SEEN = set()
 
 
@@ -134,39 +141,35 @@ def loc_addr(loc):
     return int(str(addr).strip().split()[0], 0)
 
 
-def record_stop(bp):
-    """First stop writes status and gdb_print. Later stops only set sticky true."""
+def record_line_stop(bp):
+    """First stop writes status and gdb_print. Does not set located_on_line."""
     filename, actual_line = current_sal()
     base = Path(filename).name if filename else ""
     on_line = base == HIP_BASENAME and actual_line == bp.expected_line
-    if not bp.status_recorded:
-        bp.status_recorded = True
-        for site in bp.sites:
-            rec = RESULTS[str(site["id"])]
-            rec["stopped_line"] = actual_line
-            rec["stopped_file"] = filename
-            if not on_line:
-                rec["status"] = "no_line_debug_info"
-                rec["gdb_print"] = None
-                continue
-            expr = site["how"] or site["expr"]
-            printed = run_capture("print " + expr)
-            rec["status"] = "printed"
-            rec["gdb_print"] = printed.rstrip("\n")
-            if is_concrete_print(printed):
-                rec["located_on_line"] = True
+    if bp.status_recorded:
         return
-    if on_line:
-        for site in bp.sites:
-            mark_located(site)
+    bp.status_recorded = True
+    for site in bp.sites:
+        rec = RESULTS[str(site["id"])]
+        rec["stopped_line"] = actual_line
+        rec["stopped_file"] = filename
+        if not on_line:
+            rec["status"] = "no_line_debug_info"
+            rec["gdb_print"] = None
+            continue
+        expr = site["how"] or site["expr"]
+        printed = run_capture("print " + expr)
+        rec["status"] = "printed"
+        rec["gdb_print"] = printed.rstrip("\n")
+
+
+def record_load_stop(sites):
+    for site in sites:
+        mark_located(site)
 
 
 def refresh_locations():
-    """Pick up locations that resolved after the code object loaded.
-
-    A breakpoint that is still pending has nowhere a normal breakpoint can
-    stop. That is an empty stop set, not a failed probe.
-    """
+    """Pick up line-breakpoint locations that resolved after the code object loaded."""
     added = 0
     for bp in LINE_BPS:
         if getattr(bp, "pending", False):
@@ -181,9 +184,9 @@ def refresh_locations():
                 pc = loc_addr(loc)
             except (TypeError, ValueError, gdb.error):
                 continue
-            if pc in SEEN or pc in WANTED:
+            if pc in SEEN or pc in WANTED or pc in LOAD_WANTED:
                 continue
-            WANTED.setdefault(pc, []).append((bp, loc))
+            WANTED.setdefault(pc, []).append(("line", bp, loc))
             added += 1
     return added
 
@@ -196,10 +199,94 @@ def snapshot_locations():
         if getattr(bp, "pending", False):
             gdb.write("locations %s: pending\n" % bp.location)
             continue
-        n = sum(1 for hits in WANTED.values() for owner, _loc in hits if owner is bp)
+        n = sum(
+            1
+            for hits in WANTED.values()
+            for kind, owner, _loc in hits
+            if kind == "line" and owner is bp
+        )
         gdb.write("locations %s: %d\n" % (bp.location, n))
     gdb.write("collect: %d normal breakpoint locations\n" % sum(
         len(hits) for hits in WANTED.values()))
+
+
+def is_kernel_name(name):
+    if not name:
+        return False
+    if name == KERNEL or name.startswith(KERNEL + "("):
+        return True
+    return name.startswith("_Z15hipsmith_kernel") and ".kd" not in name
+
+
+def function_address(func):
+    try:
+        return int(func.value().address)
+    except (gdb.error, AttributeError, TypeError, ValueError):
+        return int(func.value())
+
+
+def kernel_runtime_address():
+    """Loaded address of hipsmith_kernel, not the PC of the entry stop.
+
+    The entry breakpoint stops at the first source line, which can be past
+    the symbol, and the selected frame can be a device function inlined into
+    the kernel or called from it. Walk out to the hipsmith_kernel frame and
+    use that symbol. Its address is the ELF value plus the load slide.
+    """
+    try:
+        frame = gdb.selected_frame()
+    except gdb.error as exc:
+        raise CollectError("kernel frame: %s" % exc)
+    names = []
+    while frame is not None:
+        try:
+            func = frame.function()
+        except gdb.error as exc:
+            raise CollectError("kernel frame: %s" % exc)
+        name = func.name if func is not None else None
+        names.append(name)
+        if func is not None and is_kernel_name(name):
+            if len(names) > 1:
+                gdb.write(
+                    "kernel frame under %s\n" % " -> ".join(str(n) for n in names)
+                )
+            try:
+                return function_address(func)
+            except (gdb.error, TypeError, ValueError) as exc:
+                raise CollectError("kernel symbol address: %s" % exc)
+        try:
+            frame = frame.older()
+        except gdb.error as exc:
+            raise CollectError("kernel frame: %s" % exc)
+    raise CollectError(
+        "no %s frame (%s)" % (KERNEL, ", ".join(str(n) for n in names) or "none")
+    )
+
+
+def compute_slide():
+    """ELF-to-runtime slide from the loaded hipsmith_kernel symbol."""
+    runtime = kernel_runtime_address()
+    slide = runtime - KERNEL_ELF
+    gdb.write(
+        "kernel elf 0x%x runtime 0x%x\n" % (KERNEL_ELF, runtime)
+    )
+    return slide
+
+
+def plant_load_breakpoints(slide):
+    by_runtime = {}
+    for site in sites:
+        for elf in site.get("load_elf_pcs") or []:
+            runtime = elf + slide
+            by_runtime.setdefault(runtime, []).append(site)
+    for runtime, group in sorted(by_runtime.items()):
+        bp = LoadBreakpoint(runtime, group)
+        LOAD_WANTED[runtime] = group
+        gdb.write(
+            "load bp *0x%x for ids %s\n"
+            % (runtime, ",".join(str(s["id"]) for s in group))
+        )
+    gdb.write("collect: %d load breakpoints\n" % len(by_runtime))
 
 
 def disable_location(loc):
@@ -210,26 +297,42 @@ def disable_location(loc):
 
 
 def take_stop(pc):
+    if pc in LOAD_WANTED:
+        sites = LOAD_WANTED.pop(pc)
+        SEEN.add(pc)
+        for bp in list(LOAD_BPS):
+            if getattr(bp, "runtime_pc", None) == pc:
+                bp.enabled = False
+        record_load_stop(sites)
+        return True
     hits = WANTED.pop(pc, None)
     if not hits:
         return False
     SEEN.add(pc)
     seen = set()
-    for bp, loc in hits:
+    for kind, bp, loc in hits:
         disable_location(loc)
+        if kind != "line":
+            continue
         key = id(bp)
         if key in seen:
             continue
         seen.add(key)
-        record_stop(bp)
+        record_line_stop(bp)
     return True
 
 
 def disarm_rest():
     for hits in list(WANTED.values()):
-        for _bp, loc in hits:
+        for _kind, _bp, loc in hits:
             disable_location(loc)
     WANTED.clear()
+    for bp in LOAD_BPS:
+        try:
+            bp.enabled = False
+        except (gdb.error, RuntimeError, AttributeError):
+            pass
+    LOAD_WANTED.clear()
 
 
 def dump_results():
@@ -240,8 +343,9 @@ def dump_results():
 def finish():
     if STATE["walk_ok"]:
         for rec in RESULTS.values():
-            if rec.get("located_on_line") is None:
-                rec["located_on_line"] = False
+            if rec.get("located_on_line") is True:
+                continue
+            rec["located_on_line"] = False
     else:
         gdb.write("probe failed: %s\n" % (STATE["reason"] or "walk incomplete"))
     dump_results()
@@ -274,8 +378,21 @@ class PrintLineBreakpoint(gdb.Breakpoint):
         LINE_BPS.append(self)
 
     def stop(self):
-        # The driver prints and disables the location. Altering breakpoints
-        # from inside stop is forbidden.
+        return STATE["armed"]
+
+
+class LoadBreakpoint(gdb.Breakpoint):
+    def __init__(self, runtime_pc, sites):
+        super(LoadBreakpoint, self).__init__("*%#x" % runtime_pc)
+        self.runtime_pc = runtime_pc
+        self.sites = sites
+        try:
+            self.silent = True
+        except AttributeError:
+            pass
+        LOAD_BPS.append(self)
+
+    def stop(self):
         return STATE["armed"]
 
 
@@ -292,6 +409,10 @@ def resume():
         gdb.write("continue: %s\n" % exc)
         return False
     return not STATE["exited"]
+
+
+def still_wanted():
+    return bool(WANTED) or bool(LOAD_WANTED)
 
 
 def drive():
@@ -321,6 +442,10 @@ def drive():
     entry.enabled = False
     try:
         snapshot_locations()
+        slide = compute_slide()
+        STATE["slide"] = slide
+        gdb.write("slide: 0x%x\n" % slide)
+        plant_load_breakpoints(slide)
     except CollectError as exc:
         fail(str(exc))
         return
@@ -330,10 +455,10 @@ def drive():
 
     STATE["armed"] = True
     here = current_pc()
-    if here in WANTED:
+    if here is not None:
         take_stop(here)
 
-    while WANTED and STATE["stray"] < STRAY_LIMIT and resume():
+    while still_wanted() and STATE["stray"] < STRAY_LIMIT and resume():
         pc = current_pc()
         if take_stop(pc):
             continue
@@ -361,6 +486,7 @@ sites = json.loads(Path(SITES_PATH).read_text())
 RESULTS = {}
 by_line = {}
 for site in sites:
+    site_id = str(site["id"])
     rec = {
         "id": site["id"],
         "line": site["line"],
@@ -372,8 +498,9 @@ for site in sites:
         "stopped_file": None,
         "located_on_line": None,
     }
-    RESULTS[str(site["id"])] = rec
-    by_line.setdefault(site["line"], []).append(site)
+    RESULTS[site_id] = rec
+    line_no = int(site["line"])
+    by_line.setdefault(line_no, []).append(site)
 
 try:
     drive()
@@ -390,8 +517,9 @@ finally:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run a HIPSmith kernel under ROCgdb and stop once at each normal "
-            "breakpoint location of a PRINT line."
+            "Run a HIPSmith kernel under ROCgdb. Line breakpoints fill "
+            "gdb_print; located_on_line is decided by loads in "
+            "each PRINT column segment."
         ),
         epilog="Kernel arguments go after -- .",
     )
@@ -434,6 +562,23 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def empty_report(sites: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        str(site["id"]): {
+            "id": site["id"],
+            "line": site["line"],
+            "expr": site["expr"],
+            "how": site["how"],
+            "status": "not_reached",
+            "gdb_print": None,
+            "stopped_line": None,
+            "stopped_file": None,
+            "located_on_line": None,
+        }
+        for site in sites
+    }
+
+
 def main() -> int:
     args = parse_args()
     kernel = args.kernel.resolve()
@@ -469,6 +614,17 @@ def main() -> int:
         print(f"no PRINT macros in {hip_file}")
         return 0
 
+    try:
+        sites, kernel_elf = annotate_sites_with_loads(sites, hip_file, kernel, rocgdb)
+    except LoadPcError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(empty_report(sites), indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"wrote {output}")
+        return 1
+
     with tempfile.TemporaryDirectory(prefix="run-gdb_") as tmp:
         tmp_path = Path(tmp)
         sites_json = tmp_path / "sites.json"
@@ -493,6 +649,7 @@ def main() -> int:
         env["PROBE_RESULT_JSON"] = str(result_json)
         env["PROBE_STATUS_PATH"] = str(status_path)
         env["PROBE_HIP_BASENAME"] = hip_file.name
+        env["PROBE_KERNEL_ELF"] = str(kernel_elf)
 
         cmd = [
             timeout_bin,
@@ -516,22 +673,9 @@ def main() -> int:
             if status_path.is_file() and status_path.read_text(encoding="utf-8").strip() == "ok":
                 probe_ok = True
             elif result.returncode == 0:
-                print("error: line walk did not finish cleanly", file=sys.stderr)
+                print("error: probe did not finish cleanly", file=sys.stderr)
         else:
-            report = {
-                str(site["id"]): {
-                    "id": site["id"],
-                    "line": site["line"],
-                    "expr": site["expr"],
-                    "how": site["how"],
-                    "status": "not_reached",
-                    "gdb_print": None,
-                    "stopped_line": None,
-                    "stopped_file": None,
-                    "located_on_line": None,
-                }
-                for site in sites
-            }
+            report = empty_report(sites)
             print("error: gdb did not write a result file", file=sys.stderr)
 
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -542,6 +686,19 @@ def main() -> int:
         for rec in report.values():
             counts[rec["status"]] = counts.get(rec["status"], 0) + 1
         print("status counts: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+        located = {"true": 0, "false": 0, "null": 0}
+        for rec in report.values():
+            value = rec.get("located_on_line")
+            if value is True:
+                located["true"] += 1
+            elif value is False:
+                located["false"] += 1
+            else:
+                located["null"] += 1
+        print(
+            "located_on_line: "
+            + ", ".join(f"{k}={v}" for k, v in located.items())
+        )
         if result.returncode != 0:
             return result.returncode
         return 0 if probe_ok else 1

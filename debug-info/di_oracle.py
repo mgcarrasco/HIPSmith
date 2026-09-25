@@ -18,9 +18,10 @@ execution of each print id. Values compare as bit patterns of width 8 * sizeof.
 Incorrectness uses gdb_print from the first file:line stop only.
 
 Way 2 fires only when the non-gdb target.printf run executed that id and
-target.escape has located_on_line false: a clean probe, and neither the
-file:line stop nor any walked PC printed a concrete integer. true and null
-suppress way 2. Way 1 does not consult located_on_line.
+target.escape has located_on_line false: a clean probe, and none of the
+loads in that PRINT's column segments that stopped printed a concrete
+integer. No load in those segments is false too. true and null suppress
+way 2. Way 1 does not consult located_on_line.
 """
 
 from __future__ import annotations
@@ -333,7 +334,8 @@ def classify(report: dict[str, Any]) -> dict[str, Any]:
                     "reference_missing": reference_missing})
 
         # way 2: the kernel printf executed this id, and a clean escape probe
-        # never got a concrete print at the file:line stop or any walked PC.
+        # got no concrete print from any load that stopped. No load in the
+        # PRINT segments is the same result.
         escape = probe(gdb, "target.escape", print_id)
         if way2_located(escape):
             findings.append({
